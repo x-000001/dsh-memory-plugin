@@ -399,6 +399,8 @@ dsh-memory-plugin/
 ├─ scripts/                  # build / typecheck / test / package-shape gate (zero deps)
 ├─ types/tsdown.d.ts         # type shim for the OPTIONAL tsdown config
 ├─ tsconfig.json tsconfig.build.json tsdown.config.ts vitest.config.ts
+│                            # the two optional runner configs are shipped but not
+│                            # part of `tsc`'s project (their packages are not deps)
 ├─ pnpm-workspace.yaml pnpm-lock.yaml
 ├─ .github/workflows/{ci,release}.yml
 ├─ .githooks/pre-commit      # build + typecheck + test + package gate
