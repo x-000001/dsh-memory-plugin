@@ -434,13 +434,29 @@ Conventional Commits are used (`feat:` / `fix:` / `docs:` / `test:` / `chore:` /
 credentials, public IPs, or local memory data (`.gitignore` excludes `.dsh/memory/`, `node_modules/`,
 logs, tarballs).
 
+### Observed on the real repository
+
+* Repository: **https://github.com/x-000001/dsh-memory-plugin** (public; topics `dsh-plugin`,
+  `deepseek-harness`, `long-term-memory`, `cordis-plugin`).
+* **CI is green**: run [39132322238](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39132322238)
+  on `main` (`55c053c`) passed every step — frozen install, build, typecheck, 28 tests, package-shape
+  gate and pack dry-run. Two earlier red runs exposed CI-only defects that the local sandbox could not
+  (missing `@types/node` for `"types": ["node"]`, then an optional `vitest/config` import inside the tsc
+  project); both fixes are in the history (`8d5fd3a`, `55c053c`).
+* **Release gate exercised**: tag `v0.1.0` ran the Release workflow. The `release gate` job passed the
+  full build/typecheck/test/package shape; the `publish to npm + GitHub Release` job then stopped at
+  `Require NPM_TOKEN` with `::error::`, and the Publish + Create GitHub Release steps were **skipped**.
+  `GET /repos/x-000001/dsh-memory-plugin/releases` returns `0` — no empty Release was created, exactly
+  the required fail-closed behavior until a token is configured.
+* **npm**: not published (no `NPM_TOKEN` in this environment); `pnpm publish --dry-run` passes locally.
+
 ### Machine-readable publish status
 
 Observed by `dsh-plugin-cicd` (or any tool that reads repo status) from
 [`publish-status.json`](publish-status.json) and from this line:
 
 ```text
-dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"configured: build+typecheck+test+package-shape+pack-dry-run","release":"configured: tag v*, full gate, NPM_TOKEN missing => hard fail before publish/release","npm":"not published (local 0.1.0; first publish happens on v0.1.0 tag with NPM_TOKEN)"}
+dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39132322238 on main@55c053c","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes"}
 ```
 
 The sidebar/settings card created by the client half shows the same health/status data live
