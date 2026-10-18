@@ -50,14 +50,18 @@
     "pack:dry": "pnpm pack --dry-run",
     "prepack": "node scripts/build.mjs --check && node scripts/verify-package.mjs"
   },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/omdsh-dev/dsh-memory-plugin.git"
+    "url": "git+https://github.com/x-000001/dsh-memory-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/omdsh-dev/dsh-memory-plugin/issues"
+    "url": "https://github.com/x-000001/dsh-memory-plugin/issues"
   },
-  "homepage": "https://github.com/omdsh-dev/dsh-memory-plugin#readme",
+  "homepage": "https://github.com/x-000001/dsh-memory-plugin#readme",
   "packageManager": "pnpm@11.22.0",
   "publishConfig": {
     "access": "public"

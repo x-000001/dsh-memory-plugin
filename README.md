@@ -32,7 +32,7 @@ conflict with the current runtime, the runtime wins; deviations are listed expli
 | `dsh-progressive-tools` | Byte-stable prefix as a constraint on progressive disclosure, accepting a smaller first request | We keep the injected section text byte-identical while its content signature is unchanged, and disclose nothing new per turn: the index only changes when memory content changes (new write / forget / consolidation / health transition). We do not shrink the visible tool table dynamically — see "Cache stability" below for the measurement rationale. |
 
 **Deviation from the reference plugins' packaging:** this repo ships `lib/` (build output) inside the
-package and commits it, so an offline `gh repo create … --push` produces a bundle that can be installed
+package and commits it, so a fresh clone of the repository produces a bundle that can be installed
 without a build step in the target profile. `defineTool` is satisfied by a local, dependency-free
 implementation of the documented contract (`src/tool.ts`) rather than importing
 `@deepseek-ai/dsh-tools` from the plugin directory: a bundle installed at `$DSH_HOME/plugins/<name>`
@@ -222,7 +222,7 @@ not block the main conversation.
 The bundle is a normal Cordis plugin bundle. From a checkout of this repo:
 
 ```bash
-pnpm install --frozen-lockfile   # no runtime dependencies; this only prepares scripts
+pnpm install --frozen-lockfile   # runtime deps: none; TypeScript/@types/node are dev-only
 pnpm build                       # TypeScript -> lib/ using Node's own type stripper
 pnpm verify                      # build --check + package-shape gate + tests
 ```

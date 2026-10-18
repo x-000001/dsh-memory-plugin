@@ -51,9 +51,6 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      - name: Install type checker (CI tool, not a package dependency)
-        run: npm install --global typescript@5.9.2
-
       - name: Build
         run: pnpm -r build
 

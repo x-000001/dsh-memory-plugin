@@ -34,10 +34,9 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
-      # TypeScript is a CI tool only (the published package has zero
-      # dependencies). Installed globally so the lockfile stays dependency-free.
-      - name: Install type checker (CI tool, not a package dependency)
-        run: npm install --global typescript@5.9.2
+      # The published package has zero runtime dependencies. TypeScript and
+      # @types/node are devDependencies used only by this strict typecheck, so
+      # the frozen install above is enough to run every gate.
 
       - name: Build
         run: pnpm -r build

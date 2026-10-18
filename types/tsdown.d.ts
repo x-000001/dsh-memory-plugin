@@ -1,11 +1,10 @@
 /**
  * Local type shim for the OPTIONAL bundler config (`tsdown.config.ts`).
  *
- * tsdown is not a dependency of this package (the supported build is the
- * zero-dependency `scripts/build.mjs`), and this environment has no registry
- * access, so the module is not installed here. Declaring the one API the
- * optional config uses keeps `tsc --noEmit` green without adding a dependency
- * or dropping the tsdown config from the repo.
+ * tsdown is intentionally not a package dependency (the supported build is the
+ * zero-dependency `scripts/build.mjs`), so it is not installed for this repo.
+ * Declaring the one API the optional config uses keeps `tsc --noEmit` green
+ * without adding a dependency or dropping the tsdown config from the repo.
  */
 declare module 'tsdown' {
   export interface TsdownConfig {

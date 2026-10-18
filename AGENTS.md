@@ -67,7 +67,7 @@ app; it is an in-process plugin loaded by the DSH Loader through `cordis.patch.y
 
 ```bash
 pnpm build                    # src/ + client/ -> lib/ (also: node scripts/build.mjs; --check for CI)
-pnpm typecheck                # tsc --noEmit (needs a local/global TypeScript; offline fallback available)
+pnpm typecheck                # tsc --noEmit via devDependency TypeScript (script resolves it; parse-only fallback if absent)
 pnpm test                     # node scripts/test.mjs (runs tests/**/*.spec.ts)
 pnpm verify                   # build --check + verify-package + tests (pre-commit and CI gate)
 git config core.hooksPath .githooks   # enable pre-commit gate
