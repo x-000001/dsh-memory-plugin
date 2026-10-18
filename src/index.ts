@@ -11,6 +11,7 @@
  * only model call in the whole plugin is the optional habit judge (default
  * off) and it fails open.
  */
+import { fileURLToPath } from 'node:url'
 import { resolveConfig } from './config.ts'
 import { MemoryRuntime } from './runtime.ts'
 import { defineTool, textBlock, type ToolExec } from './tool.ts'
@@ -55,8 +56,44 @@ function json(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
+/**
+ * Resolve the project directory the plugin should anchor project memory to.
+ *
+ * Cordis proxies every context property through its service registry and throws
+ * `cannot get property "<name>" without inject` for undeclared properties; a
+ * real activation failure was observed in DSH 0.2.0-rc.1 when reading
+ * `ctx.baseDir` bare. Every probe below therefore runs inside its own try/catch
+ * and the plugin always falls back to `process.cwd()`.
+ */
+function safeProperty(scope: any, name: string): unknown {
+  try {
+    return scope?.[name]
+  } catch {
+    return undefined
+  }
+}
+
+function resolveCwd(ctx: any): string {
+  const root = safeProperty(ctx, 'root')
+  for (const scope of [ctx, root]) {
+    for (const key of ['baseDir', 'cwd']) {
+      const dir = safeProperty(scope, key)
+      if (typeof dir === 'string' && dir.length > 0) return dir
+    }
+    const baseUrl = safeProperty(scope, 'baseUrl')
+    if (typeof baseUrl === 'string' && baseUrl.startsWith('file:')) {
+      try {
+        return fileURLToPath(baseUrl)
+      } catch {
+        // malformed baseUrl; fall through
+      }
+    }
+  }
+  return process.cwd()
+}
+
 export function apply(ctx: any, config: unknown): void {
-  const cwd = typeof ctx?.baseDir === 'string' ? ctx.baseDir : process.cwd()
+  const cwd = resolveCwd(ctx)
   const cfg = resolveConfig(config as Partial<MemoryPluginConfig> | undefined)
 
   // ---- optional LLM caller for the habit judge (never required) ------------

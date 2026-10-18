@@ -330,8 +330,35 @@ pnpm verify      # build --check + package gate + tests (same gate as CI)
 ```
 
 * `tests/plugin.spec.ts` — 17 acceptance tests over an isolated temp `DSH_HOME` + project fixtures.
-* `tests/lib.spec.ts` — 10 artifact/packaging tests against the **built** `lib/`.
+* `tests/lib.spec.ts` — 11 artifact/packaging tests against the **built** `lib/`.
 * `tests/harness.ts` — fixtures (`createHarness`, fake judge, failing judge, correction feeder).
+
+### Real-runtime verification (DSH 0.2.0-rc.1, Cordis 4.0.4)
+
+Beyond the local suite, the plugin was exercised against the real runtime:
+
+1. **Real Cordis activation** — a `Context` from the shipped `@deepseek-ai/cordis@4.0.4` with a
+   provided `tools` service activates `lib/index.js` and receives all 8 tools with wire-valid schemas;
+   activating with no `systemPrompt`/`webServer`/`llm` services also succeeds (optional-service path).
+2. **Real DSH boot** — a throwaway `DSH_HOME` with a `headless` profile plus this bundle boots with
+   **no "entry did not activate" warning** and writes `storages/memory/health.json` with
+   `status: "active"`, `judge: false`, all four store features enabled. Boot stops later at
+   `MISSING_CREDENTIAL` only because the throwaway profile has no model key (no network here).
+3. **Real integration bugs found and fixed by that boot** (kept as regressions):
+   * `ctx.baseDir` cannot be read bare — Cordis proxies undeclared properties and throws
+     `cannot get property "baseDir" without inject`; the resolver now probes `baseDir`/`cwd`/`baseUrl`
+     defensively and falls back to `process.cwd()`.
+   * `type: "json"` is rejected on the wire (`schema.type must be one of …`); the author-only `json`
+     spec now compiles to the annotation-only unconstrained form, covered by
+     `tests/lib.spec.ts` "tool schemas use only the JSON Schema subset the harness accepts".
+
+### Installed in this profile
+
+The bundle is installed into the live DSH profile (`dsh-plugin-memory` is in
+`dsh.profile.bundles`, linked to this repo). The running DSH process imported the pre-fix module, so
+the currently loaded fiber reports `1 entry did not activate`; the fixed `lib/` is what the loader
+reads on the next DSH restart. Nothing in the plugin itself needs changing for activation.
+
 
 Acceptance evidence map:
 

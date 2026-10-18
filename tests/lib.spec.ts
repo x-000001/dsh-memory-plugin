@@ -148,6 +148,37 @@ test('apply() registers the full memory tool table', () => {
   }
 })
 
+test('tool schemas use only the JSON Schema subset the harness accepts', () => {
+  // Regression: dsh-tools rejects `type: "json"` on the wire ("schema.type
+  // must be one of object/array/string/number/integer/boolean/null"); the
+  // author-only `json` spec must compile to the annotation-only form.
+  const allowed = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'])
+  const walk = (node: any, path: string): void => {
+    if (Array.isArray(node)) {
+      node.forEach((child, index) => walk(child, `${path}[${index}]`))
+      return
+    }
+    if (!node || typeof node !== 'object') return
+    if (Object.hasOwn(node, 'type')) {
+      assert.ok(typeof node.type === 'string', `${path}.type is a string`)
+      assert.ok(allowed.has(node.type), `${path}.type "${node.type}" is a supported JSON Schema type`)
+    }
+    for (const key of ['properties']) {
+      if (node[key]) for (const [name, child] of Object.entries(node[key])) walk(child, `${path}.${key}.${name}`)
+    }
+    for (const key of ['items', 'additionalProperties']) {
+      if (node[key]) walk(node[key], `${path}.${key}`)
+    }
+    for (const key of ['oneOf', 'anyOf']) {
+      if (Array.isArray(node[key])) walk(node[key], `${path}.${key}`)
+    }
+  }
+  for (const definition of defs) {
+    walk(definition.parameters, `${definition.name}.parameters`)
+    walk(definition.output.schema, `${definition.name}.output.schema`)
+  }
+})
+
 test('memory_habits is read-only: the model cannot promote a habit', () => {
   const habits = tool('memory_habits')
   const properties = habits.parameters?.properties ?? {}

@@ -21,7 +21,21 @@
       "node scripts/verify-package.mjs",
       "pnpm pack --dry-run"
     ],
-    "status": "configured; local equivalent passes (build, typecheck, 27 tests, 14 package checks, pack dry-run). Remote CI not yet observed: this repository has no remote configured in the authoring environment."
+    "status": "configured; local equivalent of every CI step passes (pnpm install --frozen-lockfile, pnpm -r build, pnpm -r typecheck, pnpm test, verify-package 14/14, pnpm pack --dry-run). Remote CI not yet observed: no git remote in the authoring environment and github.com is unreachable (no proxy/TLS egress)."
+  },
+  "install": {
+    "profile": "core-020",
+    "state": "installed-and-linked",
+    "bundleListed": true,
+    "activation": "pending-dsh-restart: the running DSH process cached the pre-fix module; a throwaway headless DSH boot with the fixed lib activates without warnings and writes health.json status=active",
+    "verifiedInRealDsh": {
+      "dsh": "0.2.0-rc.1",
+      "cordis": "4.0.4",
+      "toolsRegistered": 8,
+      "health": "active",
+      "judge": "off",
+      "note": "boot stops afterwards at MISSING_CREDENTIAL only because the throwaway profile has no model key"
+    }
   },
   "release": {
     "workflow": ".github/workflows/release.yml",
@@ -34,11 +48,23 @@
     "package": "dsh-plugin-memory",
     "version": "0.1.0",
     "status": "not-published",
-    "note": "first publish happens when a v* tag carrying NPM_TOKEN is pushed"
+    "regressionCheck": "pnpm publish --dry-run: PASS (prepack gate ran, 14/14 package checks, 'Skip publishing dsh-plugin-memory@0.1.0 (dry run)')",
+    "note": "real publish requires a registry + NPM_TOKEN; both unavailable in the authoring environment, so the v* tag release path is configured but not exercised"
   },
   "verification": {
     "command": "pnpm verify",
-    "tests": { "plugin": 17, "artifact": 10, "total": 27, "status": "pass" },
+    "tests": { "plugin": 17, "artifact": 11, "total": 28, "status": "pass" },
+    "localCiEquivalent": {
+      "command": "pnpm install --frozen-lockfile && pnpm -r build && pnpm -r typecheck && pnpm test && node scripts/verify-package.mjs && pnpm pack --dry-run",
+      "status": "pass",
+      "exitCode": 0
+    },
+    "realCordisActivation": {
+      "cordis": "4.0.4",
+      "toolsRegistered": 8,
+      "optionalServicesAbsentOk": true,
+      "status": "pass"
+    },
     "packageChecks": { "count": 14, "status": "pass" },
     "packDryRun": {
       "file": "dsh-plugin-memory-0.1.0.tgz",

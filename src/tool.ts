@@ -62,6 +62,16 @@ export interface ToolExec {
 /** Compile one author-facing value spec to raw JSON Schema (wire form). */
 export function toJsonSchema(spec: ValueSpec): Record<string, unknown> {
   if (!spec || typeof spec !== 'object') return {}
+  // Author-only `json` is the unconstrained-JSON form on the wire: the harness
+  // rejects `type: "json"` outright ("schema.type must be one of
+  // object/array/string/number/integer/boolean/null") and documents
+  // annotation-only schemas as the unconstrained form instead.
+  if (spec.type === 'json') {
+    const loose: Record<string, unknown> = {}
+    if (spec.description) loose.description = spec.description
+    if (spec.title) loose.title = spec.title
+    return loose
+  }
   if (spec.oneOf) return { oneOf: spec.oneOf.map((branch) => toJsonSchema(branch)) }
   const type = spec.type ?? (spec.properties ? 'object' : 'string')
   const out: Record<string, unknown> = { type }
