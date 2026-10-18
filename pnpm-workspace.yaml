@@ -1,0 +1,5 @@
+# This repo is a single self-contained plugin package. The workspace file exists
+# so `pnpm -r build` / `pnpm -r typecheck` work from the repository root and so
+# pnpm's recursive commands have an explicit package set.
+packages:
+  - '.'

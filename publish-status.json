@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "tool": "dsh-plugin-cicd",
+  "plugin": "dsh-plugin-memory",
+  "version": "0.1.0",
+  "repository": "https://github.com/omdsh-dev/dsh-memory-plugin",
+  "bundle": {
+    "patch": "./cordis.patch.yml",
+    "loaderRowId": "dsh-memory",
+    "entry": "./lib/index.js",
+    "client": "./lib/client/index.js"
+  },
+  "ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "triggers": ["push:main", "pull_request:main"],
+    "gate": [
+      "pnpm install --frozen-lockfile",
+      "pnpm -r build",
+      "pnpm -r typecheck",
+      "pnpm test",
+      "node scripts/verify-package.mjs",
+      "pnpm pack --dry-run"
+    ],
+    "status": "configured; local equivalent passes (build, typecheck, 27 tests, 14 package checks, pack dry-run). Remote CI not yet observed: this repository has no remote configured in the authoring environment."
+  },
+  "release": {
+    "workflow": ".github/workflows/release.yml",
+    "trigger": "tag v* only",
+    "tagMustEqualPackageVersion": true,
+    "npmTokenPolicy": "required; if NPM_TOKEN is missing the workflow emits ::error:: and hard-fails before publishing or creating a GitHub Release (no empty release)",
+    "status": "configured; no tag pushed yet"
+  },
+  "npm": {
+    "package": "dsh-plugin-memory",
+    "version": "0.1.0",
+    "status": "not-published",
+    "note": "first publish happens when a v* tag carrying NPM_TOKEN is pushed"
+  },
+  "verification": {
+    "command": "pnpm verify",
+    "tests": { "plugin": 17, "artifact": 10, "total": 27, "status": "pass" },
+    "packageChecks": { "count": 14, "status": "pass" },
+    "packDryRun": {
+      "file": "dsh-plugin-memory-0.1.0.tgz",
+      "contents": [
+        "cordis.patch.yml",
+        "lib/budget.js",
+        "lib/client/index.js",
+        "lib/config.js",
+        "lib/guard.js",
+        "lib/habit.js",
+        "lib/health.js",
+        "lib/index.js",
+        "lib/inject.js",
+        "lib/invariant.js",
+        "lib/judge.js",
+        "lib/memory.js",
+        "lib/runtime.js",
+        "lib/storage.js",
+        "lib/tool.js",
+        "lib/types.js",
+        "LICENSE",
+        "package.json"
+      ],
+      "excluded": ["src/", "tests/", ".dsh/memory", "node_modules/"]
+    }
+  },
+  "zeroLlm": {
+    "coreUsableWithoutLlm": true,
+    "judgeDefault": "off",
+    "judgeFailureMode": "fail-open",
+    "vectorBackendRequired": false
+  }
+}

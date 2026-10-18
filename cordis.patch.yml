@@ -1,0 +1,58 @@
+# Cordis bundle patch — one row, one loader entry.
+#
+# Installed by the Cordis Loader / plugin manager as a bundle: the row's `name`
+# is the package specifier of this repo (resolved from the bundle directory) and
+# `config` is the plugin config merged over the plugin's own defaults.
+#
+# Optional services are declared by the plugin itself (`inject: ['tools']` plus
+# ctx.inject for systemPrompt/llm/webServer), so this row only enables the
+# plugin. Removing the row or setting `disabled: true` unloads it cleanly and
+# runs every ctx.effect() disposer in reverse order.
+- insert:
+    - id: dsh-memory
+      name: dsh-plugin-memory
+      config:
+        # Memory roots — project memory follows the repository, global and habit
+        # memory follow DSH_HOME. Changing these does NOT merge stores: the
+        # runtime refuses nested or duplicated roots and reports `unavailable`
+        # in the state file instead of writing across roots.
+        projectMemoryDir: ".dsh/memory"
+        globalMemoryDir: "~/.dsh/memory"
+        habitDir: "~/.dsh/storages/habit"
+        # Keep the resident index byte-stable while its content signature is
+        # unchanged (prompt-cache friendliness). Disable only for debugging.
+        cacheStable: true
+        budget:
+          # Resident index hard caps: one index line <= 150 chars.
+          indexMaxLines: 24
+          indexMaxLineChars: 150
+          indexMaxChars: 3000
+          # On-demand recall caps (per call + per session cumulative budget).
+          recallMaxResults: 5
+          recallMaxCharsPerMemory: 1200
+          recallMaxTotalChars: 4000
+          recallSessionBudgetChars: 12000
+          habitPromptMaxChars: 800
+          # Long-task offload threshold: above this a tool result is spilled to
+          # disk and only its structured summary stays in context.
+          unloadThresholdChars: 16000
+        lifecycle:
+          expireDays: 30
+          dormantDays: 14
+          weakRecallDays: 30
+          capacity: 500
+        habit:
+          enabled: true
+          threshold: 3
+          maxEvidence: 5
+          # The judge model is OPTIONAL and OFF by default: zero-LLM is the
+          # supported baseline. `judgeProvider` stays empty until a route is
+          # deliberately configured; a configured-but-broken route fails open.
+          judgeEnabled: false
+          judgeProvider: ""
+          judgeModel: ""
+          judgeTimeoutMs: 4000
+          minSessionsForAuto: 2
+        guard:
+          blockEnvAssignments: true
+          extraDenyPatterns: []

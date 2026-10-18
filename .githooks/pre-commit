@@ -1,0 +1,10 @@
+#!/bin/sh
+# Enable once per clone: git config core.hooksPath .githooks
+# Runs the same gate as CI before a commit is created.
+set -eu
+
+echo "[pre-commit] build + typecheck + tests"
+pnpm build
+pnpm typecheck
+pnpm test
+node scripts/verify-package.mjs

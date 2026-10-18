@@ -1,0 +1,58 @@
+name: CI
+
+# Hard gate for every change to main. `--frozen-lockfile` is mandatory: a
+# lockfile that does not match package.json fails the job instead of silently
+# resolving new versions at publish time.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: build / typecheck / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # TypeScript is a CI tool only (the published package has zero
+      # dependencies). Installed globally so the lockfile stays dependency-free.
+      - name: Install type checker (CI tool, not a package dependency)
+        run: npm install --global typescript@5.9.2
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # Proves the published shape in the same job: the tarball must contain the
+      # patch + lib/ + package.json/README/LICENSE and never src/, tests/ or
+      # .dsh/memory. verify-package also enforces the five pre-publish checks.
+      - name: Package shape
+        run: node scripts/verify-package.mjs
+
+      - name: Pack dry-run
+        run: pnpm pack --dry-run
