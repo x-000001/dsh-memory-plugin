@@ -27,7 +27,7 @@ conflict with the current runtime, the runtime wins; deviations are listed expli
 | Reference | Aligned with | Deviation and why |
 | --- | --- | --- |
 | `dsh-plugin-memory` | Layered stores, index/topic separation, hard truncation budgets, keyword-only retrieval when no LLM route exists | Stores are kept in four roots that are validated as strictly non-nested (the runtime refuses to start memory if project/global/habit roots alias). Retrieval also has a per-session cumulative budget and an explicit, observable degradation ladder, not only per-call truncation. |
-| `dsh-sieve` | Judge model as an optional token-pruning decision maker, fail-open semantics, spill archive of originals, disclosure trade-off | Our judge only decides *habit-pattern yes/no* from ≤5 evidence slices; it never prunes conversation context on the main path. Offload originals are archived per-tool-result by the `unloadThresholdChars` policy and remain byte-readable from the spill store. |
+| `dsh-sieve` | Judge model as an optional token-pruning decision maker, fail-open semantics, spill archive of originals, disclosure trade-off | Our judge only decides *habit-pattern yes/no* from ≤5 evidence slices; it never prunes conversation context on the main path. Memory bodies are disk-first and recall/expand are capped; spill primitives exist for originals, but automatic conversation-level offload is a host concern (see "Long-task offload (status in 0.1.0)"). |
 | `dsh-habit` | Deterministic correction detection, threshold trigger, candidate zone, two human gates, "model cannot self-promote" | Habit entries live in their own store with their own tombstone file, and the promotion path exists **only** on the host HTTP UI route. There is no tool parameter that can confirm or promote a habit — this is stricter than an `actor` check at the tool boundary. |
 | `dsh-progressive-tools` | Byte-stable prefix as a constraint on progressive disclosure, accepting a smaller first request | We keep the injected section text byte-identical while its content signature is unchanged, and disclose nothing new per turn: the index only changes when memory content changes (new write / forget / consolidation / health transition). We do not shrink the visible tool table dynamically — see "Cache stability" below for the measurement rationale. |
 
@@ -131,12 +131,14 @@ Storage format is human-readable line-oriented JSON (`entries.ndjson`, `profiles
   the documented cache-share penalty. The judge model is only ever used for a habit yes/no classification,
   not on the request path, so it cannot perturb the prefix.
 * **Fixed, observable degradation order** (`budget.degradeOrder`):
-  1. shrink the index tier (`full → compact → minimal`),
+  1. shrink the index tier (`full → compact → minimal`). The tier narrows the index plan (line/char caps,
+     `minPriority`); a whole-index fallback to a single line happens when the index cannot be built,
   2. lower top-K / per-call char caps,
-  3. keep only P0/high-confidence entries,
+  3. keep only P0/high-confidence entries (`minPriority`),
   4. degrade to a single index line.
-  Every step is recorded in the audit log and surfaced as `tier` + `degradationReasons` in the recall
-  result and in the status report.
+  The recall ladder advances per session (`compact → minimal → single-line → none`); every step is
+  recorded in the audit log and surfaced as `tier` + `degradationReasons` in the recall result and in the
+  status report.
 
 ### Optional judge model (fail open)
 
@@ -148,11 +150,14 @@ timeout (`judgeTimeoutMs`), unavailable route, or unparseable output, the judge 
 path is used, the originals are kept, and the health state becomes `degraded` with reason
 `judge-failed` so the user can see it. The main model is never asked to do this classification.
 
-### Long-task offload
+### Long-task offload (status in 0.1.0)
 
-Intermediate tool output above `budget.unloadThresholdChars` (default 16000) is externalized to
-`$DSH_HOME/storages/memory/spill/`, leaving only a structured summary/task canvas in context. The spill
-reference is recorded; the original bytes are readable back from disk.
+`budget.unloadThresholdChars` (default 16000) is a declared/reserved budget knob; host-side automatic
+offload of oversized *tool results* is **not implemented** in 0.1.0 (the plugin never rewrites the
+conversation context). What is implemented: memory bodies and spill candidates live on disk under
+`$DSH_HOME/storages/memory/spill/` (byte-readable through the store API), and recall/expand always return
+bounded excerpts, so no memory tool output is unbounded. Offloading main-conversation tool results remains
+a host/compaction concern.
 
 ### Tri-state health, never silent
 
@@ -162,8 +167,9 @@ reasons (`code`, `message`, `scope`) and per-feature flags (`storage`, `index`, 
 
 * the client settings page (`settings.section`, id `dsh-memory`) showing a status badge + warnings;
 * `GET /dsh-memory/status` (JSON, also used by external tooling);
-* a one-line system-prompt warning (`dsh-memory DEGRADED: [index] index-build-failed: … (state: …)`) and
-  the same warning in every tool response's `warning` field while degraded.
+* a one-line system-prompt warning (`dsh-memory DEGRADED: [index] index-build-failed: … (state: …)`) when
+  the memory runtime exists, plus a `warning` field on status-style / rejected tool results and on the
+  HTTP status payload.
 
 Tested scenarios: write-guard rejection, index build failure, judge unavailable, storage unavailable.
 
@@ -208,7 +214,7 @@ not block the main conversation.
 | --- | --- | --- |
 | `memory_remember` | ✅ | guarded write into project/global; global requires explicit `confirmed=true` |
 | `memory_recall` | ✅ | bounded, deduped progressive-disclosure retrieval |
-| `memory_expand` | ✅ | fetch a full body by id with a per-call char cap |
+| `memory_expand` | ✅ | fetch a stored body by id, bounded by the per-call and session caps |
 | `memory_forget` | ✅ | tombstone (P0/user memory protected unless `force=true`) |
 | `memory_consolidate` | ✅ | expire/dormant/evict/archive chain, `dryRun` supported |
 | `memory_status` | ✅ | health, reasons, stores, counts, budgets, cache hash/tier, `zeroLlm` |
@@ -331,6 +337,7 @@ pnpm verify      # build --check + package gate + tests (same gate as CI)
 
 * `tests/plugin.spec.ts` — 23 acceptance tests over an isolated temp `DSH_HOME` + project fixtures.
 * `tests/lib.spec.ts` — 15 artifact/packaging/audit tests against the **built** `lib/`.
+* `tests/audit.spec.ts` — 10 regression probes for the second audit pass (BUG-1…BUG-8 + two passing probes).
 * `tests/harness.ts` — fixtures (`createHarness`, fake judge, failing judge, correction feeder).
 
 ### Audit (source review + executable probes)
@@ -358,6 +365,23 @@ Probe before/after numbers (also in `publish-status.json`): one memory + 200 rec
 `entries.ndjson` from 1 line/454 B to 201 lines/104654 B; after the fix 400 recalls stay at
 146 lines/76504 B. Three real `user/message` envelopes produced 0 habit signals before the
 envelope fix and 3 signals plus one pending candidate afterwards.
+
+### Audit 2 (strict 分析 → 测试 → 修复 pass)
+
+A second, strictly ordered audit (read-only analysis → test-only reproduction → one minimal fix per
+defect) found eight further defects. Each has a failing probe in `tests/audit.spec.ts` (written in the
+test phase, before the fix) and its own revertible commit.
+
+| ID | Defect | Fix commit |
+| --- | --- | --- |
+| BUG-1 | `memory_expand` returned the full body in `entry` while only the truncated `body` was charged, bypassing the disclosure budget | `fix(memory): keep memory_expand payload inside the per-call cap` |
+| BUG-2 | `/dsh-memory/status` threw out of the request handler when the store was unreadable | `fix(web): report status route failures instead of throwing` |
+| BUG-3 | `/dsh-memory/habits` threw from the `'end'` listener on a corrupt hand-edited `candidates.json` | `fix(web): catch habit route failures instead of throwing` |
+| BUG-4 | `memory_status` threw instead of reporting a visible degraded state on an I/O error | `fix(runtime): make statusReport report read failures instead of throwing` |
+| BUG-5 | `consolidate()` reported `kept` for the last layer only | `fix(memory): count kept entries across all layers in consolidate` |
+| BUG-6 | a configured `budget.degradeOrder` was silently replaced by the default | `fix(config): honor configured budget.degradeOrder` |
+| BUG-7 | `findCurrent()` read the first row of a version, so `recallCount` never accumulated | `fix(memory): read the visible revision in findCurrent` |
+| BUG-8 | write dedupe matched archived revisions, so re-writing superseded content was silently dropped | `fix(memory): dedupe writes only against visible revisions` |
 
 
 ### Real-runtime verification (DSH 0.2.0-rc.1, Cordis 4.0.4)

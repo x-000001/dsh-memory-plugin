@@ -74,7 +74,8 @@
     "tests": {
       "plugin": 23,
       "artifact": 15,
-      "total": 38,
+      "audit": 10,
+      "total": 48,
       "status": "pass"
     },
     "localCiEquivalent": {
@@ -232,5 +233,53 @@
       "status": "success",
       "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39135601378"
     }
+  },
+  "audit2": {
+    "status": "pass",
+    "method": "strict three-phase audit: (1) read-only analysis, (2) test-only reproduction in tests/audit.spec.ts (8 failing probes + 2 passing probes on pre-fix code), (3) one minimal fix per defect in its own revertible commit",
+    "baseline": {
+      "commit": "d875d17",
+      "tests": 38,
+      "packageChecks": 14,
+      "buildCheck": "lib/ up to date (14 modules)",
+      "typecheck": "clean"
+    },
+    "findings": [
+      { "id": "BUG-1", "severity": "high", "area": "memory_expand", "bug": "the returned entry carried the full stored body while only the truncated body was charged to the session disclosure budget", "fix": "entry.body is the same bounded slice that is charged", "commit": "baa0df2" },
+      { "id": "BUG-2", "severity": "high", "area": "GET /dsh-memory/status", "bug": "statusReport() was called without a try/catch: an unreadable store threw out of the webserver handler (uncaught exception instead of visible failure)", "fix": "route answers 500 with ok:false, error, warning, health", "commit": "dc4fe2b" },
+      { "id": "BUG-3", "severity": "high", "area": "POST /dsh-memory/habits", "bug": "the request 'end' listener read hand-editable candidates.json unguarded: a malformed file threw out of the stream listener", "fix": "listener body guarded, 500 with concrete reason + degraded habit feature", "commit": "dc52117" },
+      { "id": "BUG-4", "severity": "high", "area": "memory_status", "bug": "statusReport() -> memory.status() threw on an I/O error, so the model tool threw instead of reporting degradation", "fix": "failures set recall degraded and return {ok:false, health, warning, error}", "commit": "00dedcb" },
+      { "id": "BUG-5", "severity": "medium", "area": "consolidate", "bug": "report.kept was assigned inside the per-layer loop, reporting only the last layer's count", "fix": "accumulate kept across layers", "commit": "7f4d2a5" },
+      { "id": "BUG-6", "severity": "medium", "area": "resolveConfig", "bug": "a configured budget.degradeOrder was always overwritten with the default", "fix": "keep the merged, configured order", "commit": "a58f7ac" },
+      { "id": "BUG-7", "severity": "medium", "area": "findCurrent", "bug": "the reducer kept the first row of the newest version while findAllCurrent keeps the last, so recallCount never accumulated and capacity eviction sorted on stale counts", "fix": "reducer uses version >=", "commit": "94c912c" },
+      { "id": "BUG-8", "severity": "medium", "area": "write dedupe", "bug": "dedupe matched archived revisions, so re-writing superseded content returned an invisible archived version as deduped", "fix": "dedupe considers active/dormant revisions only", "commit": "c7c47e2" }
+    ],
+    "preFixEvidence": {
+      "suite": "tests/audit.spec.ts",
+      "result": "8 of 10 probes failed on d875d17 (BUG-1..BUG-8); 2 passing probes confirmed correct budget/audit behaviour",
+      "localLog": "phase-2 run log kept outside the repository (scratch working files are not committed)"
+    },
+    "postFix": {
+      "tests": { "plugin": 23, "artifact": 15, "audit": 10, "total": 48, "status": "pass" },
+      "typecheck": "pass",
+      "buildCheck": "pass",
+      "packageChecks": "14/14 pass",
+      "packDryRun": "same 19-file shape (lib/**, cordis.patch.yml, package.json, README.md, LICENSE; no src/tests/.dsh)",
+      "fixCommits": ["baa0df2", "dc4fe2b", "dc52117", "00dedcb", "7f4d2a5", "a58f7ac", "94c912c", "c7c47e2"],
+      "testCommit": "a0b5254"
+    },
+    "functionalEquivalence": "No public API, tool parameter/return, config default, data-file format, injection text or health-state semantic was changed. The existing 38 tests pass unmodified; only the eight defective behaviours changed.",
+    "docsCorrections": [
+      "README: memory_expand wording now states the per-call/session cap instead of 'full body'",
+      "README: 'Long-task offload' marked as not implemented in 0.1.0 (unloadThresholdChars is a reserved knob; spill primitives exist)",
+      "README: index-tier wording now matches the implemented plan/fallback behaviour",
+      "README: removed the claim that every tool response carries a warning field"
+    ],
+    "remainingRisks": [
+      "the project store root is resolved from the process cwd at apply() time; a single DSH process opening several different repositories keeps writing the first repo's project store (documented limitation, not changed in this audit)",
+      "habit candidate/evidence writes (signals.ndjson, candidates.json, audit detail) are not covered by the credential write-guard; README claims 'all write paths', which overstates coverage",
+      "unloadThresholdChars is declared but unused (documented in README)",
+      "the live DSH process still needs a restart to load the fixed lib"
+    ]
   }
 }
