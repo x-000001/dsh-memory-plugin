@@ -225,14 +225,30 @@ export function apply(ctx: any, config: unknown): void {
       kind: 'exact',
       path: '/dsh-memory/status',
       handler: (req: any, res: any) => {
-        if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
-          res.writeHead(405, { 'content-type': 'application/json' })
-          res.end(json({ ok: false, error: 'method not allowed' }))
-          return
+        // A store read can fail (unreadable file, EISDIR, permissions). A throw
+        // here would escape the webserver request handler, so every failure is
+        // turned into a visible 500 payload with the concrete reason instead.
+        try {
+          if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
+            res.writeHead(405, { 'content-type': 'application/json' })
+            res.end(json({ ok: false, error: 'method not allowed' }))
+            return
+          }
+          const body = json(runtime.statusReport())
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          res.end(body)
+        } catch (error) {
+          runtime.noteRecallFailure('index', 'status-route-failed', error)
+          res.writeHead(500, { 'content-type': 'application/json' })
+          res.end(
+            json({
+              ok: false,
+              error: (error as Error).message,
+              warning: runtime.health.warningLine(),
+              health: runtime.health.snapshot(),
+            }),
+          )
         }
-        const body = json(runtime.statusReport())
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-        res.end(body)
       },
     })
     register({
