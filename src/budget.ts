@@ -57,6 +57,9 @@ export class SessionBudget {
   }
 }
 
+/** Hard cap on tracked session budgets; oldest idle session is evicted first. */
+export const MAX_TRACKED_SESSIONS = 512
+
 export class BudgetBook {
   private readonly settings: BudgetSettings
   private readonly sessions = new Map<string, SessionBudget>()
@@ -68,6 +71,16 @@ export class BudgetBook {
   session(sessionId: string): SessionBudget {
     let state = this.sessions.get(sessionId)
     if (!state) {
+      // A long-lived DSH process sees every session it ever serves. Without a
+      // cap this Map (and each entry's disclosed-id Set) grows forever, so the
+      // oldest session is dropped when the cap is reached. Evicting the oldest
+      // idle entry only forgets its disclosure dedupe state; it cannot leak
+      // memory content or raise any budget.
+      while (this.sessions.size >= MAX_TRACKED_SESSIONS) {
+        const oldest = this.sessions.keys().next()
+        if (oldest.done) break
+        this.sessions.delete(oldest.value)
+      }
       state = new SessionBudget(sessionId, this.settings.recallSessionBudgetChars)
       this.sessions.set(sessionId, state)
     }
@@ -76,6 +89,10 @@ export class BudgetBook {
 
   reset(sessionId: string): void {
     this.sessions.delete(sessionId)
+  }
+
+  get sessionCount(): number {
+    return this.sessions.size
   }
 
   get order(): DisclosedTier[] {

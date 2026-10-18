@@ -12,7 +12,10 @@
   },
   "ci": {
     "workflow": ".github/workflows/ci.yml",
-    "triggers": ["push:main", "pull_request:main"],
+    "triggers": [
+      "push:main",
+      "pull_request:main"
+    ],
     "gate": [
       "pnpm install --frozen-lockfile",
       "pnpm -r build",
@@ -68,7 +71,12 @@
   },
   "verification": {
     "command": "pnpm verify",
-    "tests": { "plugin": 17, "artifact": 11, "total": 28, "status": "pass" },
+    "tests": {
+      "plugin": 23,
+      "artifact": 15,
+      "total": 38,
+      "status": "pass"
+    },
     "localCiEquivalent": {
       "command": "pnpm install --frozen-lockfile && pnpm -r build && pnpm -r typecheck && pnpm test && node scripts/verify-package.mjs && pnpm pack --dry-run",
       "status": "pass",
@@ -80,10 +88,15 @@
       "optionalServicesAbsentOk": true,
       "status": "pass"
     },
-    "packageChecks": { "count": 14, "status": "pass" },
+    "packageChecks": {
+      "count": 14,
+      "status": "pass"
+    },
     "packDryRun": {
       "file": "dsh-plugin-memory-0.1.0.tgz",
       "contents": [
+        "LICENSE",
+        "README.md",
         "cordis.patch.yml",
         "lib/budget.js",
         "lib/client/index.js",
@@ -100,10 +113,14 @@
         "lib/storage.js",
         "lib/tool.js",
         "lib/types.js",
-        "LICENSE",
         "package.json"
       ],
-      "excluded": ["src/", "tests/", ".dsh/memory", "node_modules/"]
+      "excluded": [
+        "src/",
+        "tests/",
+        ".dsh/memory",
+        "node_modules/"
+      ]
     }
   },
   "zeroLlm": {
@@ -111,5 +128,103 @@
     "judgeDefault": "off",
     "judgeFailureMode": "fail-open",
     "vectorBackendRequired": false
+  },
+  "audit": {
+    "status": "pass",
+    "date": "2026-08-15",
+    "method": "source review against the real DSH 0.2.0-rc.1 / Cordis 4.0.4 contracts plus executable probes against the built lib/ (fake Cordis host Context, real SessionEvent envelopes, real ToolExecution agent ids)",
+    "findings": [
+      {
+        "id": "session-isolation",
+        "severity": "high",
+        "bug": "sessionIdOf() ignored exec.agent.id, so every tool call shared the \"unsessioned\" bucket: disclosure dedupe and the cumulative recall budget leaked across sessions",
+        "fix": "prefer exec.agent.id (the real SessionId contract); regression test keeps two sessions separate"
+      },
+      {
+        "id": "habit-envelope",
+        "severity": "high",
+        "bug": "session/event handler read event.content/event.message instead of the real envelope event.data, so habit detection never fired in a live DSH",
+        "fix": "read event.data first, skip non-user message sources; repeated signals are persisted from real envelopes"
+      },
+      {
+        "id": "forget-force",
+        "severity": "high",
+        "bug": "memory_forget exposed force=true to the model, letting it tombstone P0/user-protected memory",
+        "fix": "force removed from the model-facing schema; the engine still guards protected entries"
+      },
+      {
+        "id": "p0-minting",
+        "severity": "medium",
+        "bug": "the model could write priority P0 memory, creating entries protected from both the model and the lifecycle",
+        "fix": "memory_remember refuses P0; P0 stays user-authored only"
+      },
+      {
+        "id": "ndjson-growth",
+        "severity": "high",
+        "bug": "every recall appended a full copy of the entry, so one memory grew entries.ndjson by ~520 B per recall forever",
+        "fix": "append counter + automatic compaction (keep the last row per id@version, audit type \"compact\") bounds each layer at ~256 rows"
+      },
+      {
+        "id": "http-csrf",
+        "severity": "medium",
+        "bug": "POST /dsh-memory/habits had no method/content-type/origin/body-size checks (simple-request CSRF + unbounded body)",
+        "fix": "POST only, application/json only, same-site/loopback origin check, 32 KiB body cap; status route GET-only"
+      },
+      {
+        "id": "budget-growth",
+        "severity": "medium",
+        "bug": "BudgetBook kept every session forever, each with its disclosed-id Set",
+        "fix": "LRU-style cap of 512 tracked sessions with an observable sessionCount"
+      },
+      {
+        "id": "guard-coverage",
+        "severity": "medium",
+        "bug": "the write-guard scanned title+body only, so secrets inside tags or summary were persisted",
+        "fix": "summary and tags are scanned too; the guarded fields are normalized before the scan"
+      },
+      {
+        "id": "expand-budget",
+        "severity": "medium",
+        "bug": "memory_expand could inject beyond the remaining session recall budget",
+        "fix": "expand clamps to session.remaining(), reports chars/remainingChars and dedupes disclosure"
+      },
+      {
+        "id": "habit-guard",
+        "severity": "medium",
+        "bug": "habit patterns from the judge path were persisted without passing the credential write-guard",
+        "fix": "validateHabitProfile + write-guard on the habit layer; rejected patterns report line + pattern name only"
+      },
+      {
+        "id": "habit-tombstone",
+        "severity": "low",
+        "bug": "disableHabitMemory compared a lowercased title against a mixed-case string, so deleting a habit profile left the habit memory active",
+        "fix": "case-insensitive comparison on both sides"
+      },
+      {
+        "id": "corrupt-lines",
+        "severity": "medium",
+        "bug": "unreadable NDJSON lines were skipped silently, hiding hand-edit corruption and data loss",
+        "fix": "corrupt line count surfaces through health as degraded (index/corrupt-layer-lines) with a self-healing recovery once the file is fixed"
+      }
+    ],
+    "evidence": {
+      "probes": "C:/Users/29785/AppData/Local/Temp/dsh-mem-audit/{probe.mjs,growth.mjs,growth400.mjs}",
+      "before": {
+        "sessions": "remember in session A then recall in session B returned items:0, deduped:1",
+        "habitSignals": "3 real user/message envelopes produced 0 signals (legacy shape produced 1)",
+        "forget": "memory_forget {force:true} on P0 returned {\"ok\":true,\"reason\":\"tombstoned\"}",
+        "growth": "one memory + 200 recalls -> entries.ndjson 1 line/454 B to 201 lines/104654 B"
+      },
+      "after": {
+        "sessions": "session A and session B each recall their own disclosure set (items:1, deduped:[])",
+        "habitSignals": "real envelopes produce 3 signals and one pending candidate",
+        "forget": "force no longer exists in the tool schema; P0 delete is refused",
+        "growth": "400 recalls -> 146 lines/76504 B (compaction keeps each layer bounded)"
+      }
+    },
+    "remainingRisks": [
+      "the resident index is rebuilt whenever memory changes, so a write mid-session is one intentional prefix change (cache miss) — documented tradeoff, not silent flapping",
+      "the running DSH process still needs a restart to pick up the audited lib (module cache)"
+    ]
   }
 }

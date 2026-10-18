@@ -262,6 +262,10 @@ export class HabitEngine {
       createdAt: now,
       updatedAt: now,
     }
+    const safe = this.memory.validateHabitProfile(profile)
+    if (!safe.ok) {
+      return { ok: false, reason: `habit pattern rejected by write-guard: ${safe.detail}` }
+    }
     candidate.status = 'confirmed'
     candidate.updatedAt = now
     this.store.saveHabitState(state)
@@ -290,6 +294,10 @@ export class HabitEngine {
     const profiles = this.store.readHabitProfiles()
     const profile = profiles.find((p) => p.id === candidate.id)
     if (!profile) return { ok: false, reason: 'habit profile missing; confirm the candidate first' }
+    const safe = this.memory.validateHabitProfile({ ...profile, status: 'auto' })
+    if (!safe.ok) {
+      return { ok: false, reason: `habit pattern rejected by write-guard: ${safe.detail}` }
+    }
     profile.status = 'auto'
     profile.updatedAt = now
     this.store.rewriteHabitProfiles(profiles)

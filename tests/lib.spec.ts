@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { EventEmitter } from 'node:events'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -267,4 +268,107 @@ test('tarball inputs exclude src/, tests/ and local .dsh/memory', () => {
   const gitignore = readFileSync(join(repoRoot, '.gitignore'), 'utf8')
   assert.match(gitignore, /\.dsh\/memory\//)
   assert.match(gitignore, /node_modules\//)
+})
+
+// ---------------------------------------------------------------------------
+// Audit regressions: real DSH execution/session contracts and HTTP hardening
+// ---------------------------------------------------------------------------
+
+test('tool executions are isolated by exec.agent.id (the real SessionId)', async () => {
+  const execA = { agent: { id: 'agent-session-a' }, signal: undefined }
+  const execB = { agent: { id: 'agent-session-b' }, signal: undefined }
+  const written = await tool('memory_remember').execute({ title: 'Session scoped', content: 'isolationtoken only here' }, execA)
+  assert.equal(written.ok, true)
+
+  const a = await tool('memory_recall').execute({ query: 'isolationtoken' }, execA)
+  assert.equal(a.items.length, 1)
+  // A DIFFERENT session must not be deduped by A's disclosure and must get its
+  // own recall budget bucket. Before the fix both collapsed into 'unsessioned'
+  // and B saw items:0 / deduped:1.
+  const b = await tool('memory_recall').execute({ query: 'isolationtoken' }, execB)
+  assert.equal(b.items.length, 1)
+  assert.equal(b.dedupedIds.length, 0)
+})
+
+test('habit observation reads the real SessionEvent envelope (event.data)', async () => {
+  const signalsFile = join(dshHome, 'storages', 'habit', 'signals.ndjson')
+  const envelope = (text: string) => ({ type: 'user/message', seq: 1, time: Date.now(), data: { role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } } })
+  const correction = '\u4e0d\u5bf9\uff0c\u5e94\u8be5\u7528 tabs\u3002'
+  const handler = handlers['session/event'][0]
+  for (let i = 0; i < 3; i++) handler({ id: 'habit-envelope-session' }, envelope(correction))
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  const lines = readFileSync(signalsFile, 'utf8').trim().split('\n').filter(Boolean)
+  assert.ok(lines.length >= 3, `expected >=3 habit signals, got ${lines.length}`)
+
+  // Plugin-sourced user-role messages must not train habits.
+  const before = lines.length
+  handler({ id: 'habit-envelope-session' }, { ...envelope(correction), data: { role: 'user', content: [{ type: 'text', text: correction }], source: { kind: 'system-prompt' } } })
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const after = readFileSync(signalsFile, 'utf8').trim().split('\n').filter(Boolean).length
+  assert.equal(after, before)
+})
+
+test('the model can neither mint P0 nor force-forget user-protected memory', async () => {
+  const forget = tool('memory_forget')
+  assert.equal('force' in forget.parameters, false, 'force must not be a model-facing parameter')
+
+  const p0 = await tool('memory_remember').execute({ title: 'P0 rule', content: 'never forget this', priority: 'P0' }, exec)
+  assert.equal(p0.ok, false)
+  assert.match(String(p0.error), /P0 is reserved for user-authored rules/)
+
+  const normal = await tool('memory_remember').execute({ title: 'model note', content: 'fortoken ordinary note' }, exec)
+  assert.equal(normal.ok, true)
+  const removed = await forget.execute({ id: normal.id, reason: 'agent wants it gone', force: true }, exec)
+  assert.equal(removed.ok, true, 'P2 memory can still be forgotten')
+  const recalled = await tool('memory_recall').execute({ query: 'fortoken' }, exec)
+  assert.equal(recalled.items.some((item: any) => item.id === normal.id), false)
+})
+
+function callRoute(path: string, options: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<{ status: number; body: any }> {
+  const route = routes.find((candidate) => candidate.path === path)
+  assert.ok(route, `route ${path} registered`)
+  const req: any = new EventEmitter()
+  req.method = options.method ?? 'GET'
+  req.headers = { host: '127.0.0.1:3084', ...(options.headers ?? {}) }
+  let status = 0
+  let raw = ''
+  const done = new Promise<{ status: number; body: any }>((resolve) => {
+    const res: any = {
+      writeHead: (code: number) => {
+        status = code
+        return res
+      },
+      end: (chunk?: any) => {
+        raw += chunk === undefined ? '' : String(chunk)
+        resolve({ status, body: (() => { try { return JSON.parse(raw) } catch { return raw } })() })
+      },
+    }
+    route.handler(req, res)
+    if (options.body !== undefined) req.emit('data', Buffer.from(options.body))
+    req.emit('end')
+  })
+  return done
+}
+
+test('habit mutation HTTP surface only accepts same-origin JSON POSTs', async () => {
+  const base = { 'content-type': 'application/json', origin: 'http://127.0.0.1:3084' }
+
+  const getRejected = await callRoute('/dsh-memory/habits', { method: 'GET' })
+  assert.equal(getRejected.status, 405)
+
+  const textPlain = await callRoute('/dsh-memory/habits', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{"action":"list"}' })
+  assert.equal(textPlain.status, 415)
+
+  const crossSite = await callRoute('/dsh-memory/habits', { method: 'POST', headers: { ...base, origin: 'https://evil.example' }, body: '{"action":"list"}' })
+  assert.equal(crossSite.status, 403)
+
+  const tooBig = await callRoute('/dsh-memory/habits', { method: 'POST', headers: base, body: 'x'.repeat(40 * 1024) })
+  assert.equal(tooBig.status, 413)
+
+  const list = await callRoute('/dsh-memory/habits', { method: 'POST', headers: base, body: '{"action":"list"}' })
+  assert.equal(list.status, 200)
+  assert.equal(list.body.ok, true)
+
+  const statusPost = await callRoute('/dsh-memory/status', { method: 'POST' })
+  assert.equal(statusPost.status, 405)
 })

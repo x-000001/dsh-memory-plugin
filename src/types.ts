@@ -149,6 +149,7 @@ export type AuditType =
   | 'expand'
   | 'forget'
   | 'consolidate'
+  | 'compact'
   | 'feedback'
   | 'index-inject'
   | 'first-disclosure'

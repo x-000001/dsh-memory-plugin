@@ -339,9 +339,26 @@ export class LayeredStore {
     appendFileSync(file, JSON.stringify(value) + '\n', 'utf8')
   }
 
+  private readonly corruptFiles = new Map<string, number>()
+
+  /** Number of NDJSON lines skipped as unreadable during the latest reads. */
+  get corruptLineCount(): number {
+    let total = 0
+    for (const value of this.corruptFiles.values()) total += value
+    return total
+  }
+
+  get corruptFilesList(): string[] {
+    return [...this.corruptFiles.keys()]
+  }
+
   private readNdjson<T>(file: string): T[] {
-    if (!existsSync(file)) return []
+    if (!existsSync(file)) {
+      this.corruptFiles.delete(file)
+      return []
+    }
     const out: T[] = []
+    let corrupt = 0
     const lines = readFileSync(file, 'utf8').split('\n')
     for (const line of lines) {
       const trimmed = line.trim()
@@ -349,9 +366,13 @@ export class LayeredStore {
       try {
         out.push(JSON.parse(trimmed) as T)
       } catch {
-        // A hand-edited bad line must not make the whole store unreadable.
+        // A hand-edited bad line must not make the whole store unreadable,
+        // but it must not be silent either: refresh() surfaces the count.
+        corrupt += 1
       }
     }
+    if (corrupt > 0) this.corruptFiles.set(file, corrupt)
+    else this.corruptFiles.delete(file)
     return out
   }
 }

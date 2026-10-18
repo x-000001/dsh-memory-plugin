@@ -329,9 +329,36 @@ pnpm typecheck   # local tsc (falls back to syntax-only check with a warning if 
 pnpm verify      # build --check + package gate + tests (same gate as CI)
 ```
 
-* `tests/plugin.spec.ts` — 17 acceptance tests over an isolated temp `DSH_HOME` + project fixtures.
-* `tests/lib.spec.ts` — 11 artifact/packaging tests against the **built** `lib/`.
+* `tests/plugin.spec.ts` — 23 acceptance tests over an isolated temp `DSH_HOME` + project fixtures.
+* `tests/lib.spec.ts` — 15 artifact/packaging/audit tests against the **built** `lib/`.
 * `tests/harness.ts` — fixtures (`createHarness`, fake judge, failing judge, correction feeder).
+
+### Audit (source review + executable probes)
+
+The plugin was audited against the real DSH 0.2.0-rc.1 / Cordis 4.0.4 contracts with executable
+probes, not just by re-running the suite. Twelve defects were found and fixed; each has a regression
+test in the suite above. Full evidence lives in `publish-status.json` → `audit`.
+
+| Severity | Defect | Fix |
+| --- | --- | --- |
+| high | `sessionIdOf()` ignored `exec.agent.id`, so every tool call shared one `"unsessioned"` bucket and disclosure dedupe + the cumulative recall budget leaked across sessions | prefer the real `exec.agent.id`; regression test keeps two sessions isolated |
+| high | habit observation read `event.content` instead of the real `SessionEvent.data`, so correction signals never fired in a live DSH | read `event.data` first, skip plugin/model-sourced user-role messages |
+| high | `memory_forget` exposed `force=true` to the model, bypassing P0/user-memory protection | `force` removed from the model-facing schema; engine keeps the guard |
+| high | each recall appended a full copy of the entry (`~520 B` per recall, forever) | append counter + automatic compaction (last row per `id@version`, audit type `compact`) |
+| medium | the model could mint priority `P0` entries, creating memory it could never delete | `memory_remember` refuses `P0`; P0 stays user-authored |
+| medium | `POST /dsh-memory/habits` accepted any method/content-type/origin and unbounded bodies (CSRF + memory exhaustion) | POST + JSON only, same-site origin check, 32 KiB cap; status route GET-only |
+| medium | `BudgetBook` kept every session forever, each with its disclosed-id set | 512-session LRU cap with observable `sessionCount` |
+| medium | the write-guard scanned title+body only, so secrets in `tags`/`summary` were stored | guarded fields normalized and scanned too |
+| medium | `memory_expand` could inject past the remaining session budget | clamp to `session.remaining()`, report `remainingChars` |
+| medium | habit patterns bypassed the credential write-guard | `validateHabitProfile` + write-guard on the habit layer |
+| medium | unreadable NDJSON lines were silently skipped | health goes `degraded` (`corrupt-layer-lines`) and self-heals when the file is fixed |
+| low | deleting a habit profile left its memory active (case-mismatched title compare) | case-insensitive comparison |
+
+Probe before/after numbers (also in `publish-status.json`): one memory + 200 recalls grew
+`entries.ndjson` from 1 line/454 B to 201 lines/104654 B; after the fix 400 recalls stay at
+146 lines/76504 B. Three real `user/message` envelopes produced 0 habit signals before the
+envelope fix and 3 signals plus one pending candidate afterwards.
+
 
 ### Real-runtime verification (DSH 0.2.0-rc.1, Cordis 4.0.4)
 
@@ -439,7 +466,7 @@ logs, tarballs).
 * Repository: **https://github.com/x-000001/dsh-memory-plugin** (public; topics `dsh-plugin`,
   `deepseek-harness`, `long-term-memory`, `cordis-plugin`).
 * **CI is green**: run [39132322238](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39132322238)
-  on `main` (`55c053c`) passed every step — frozen install, build, typecheck, 28 tests, package-shape
+  on `main` (`55c053c`) passed every step — frozen install, build, typecheck, 38 tests, package-shape
   gate and pack dry-run. Two earlier red runs exposed CI-only defects that the local sandbox could not
   (missing `@types/node` for `"types": ["node"]`, then an optional `vitest/config` import inside the tsc
   project); both fixes are in the history (`8d5fd3a`, `55c053c`).
@@ -456,7 +483,7 @@ Observed by `dsh-plugin-cicd` (or any tool that reads repo status) from
 [`publish-status.json`](publish-status.json) and from this line:
 
 ```text
-dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39132322238 on main@55c053c","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes"}
+dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39132322238 on main@55c053c","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes","audit":"12 defects fixed with regression tests; see publish-status.json audit block"}
 ```
 
 The sidebar/settings card created by the client half shows the same health/status data live

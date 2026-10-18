@@ -103,6 +103,10 @@ export class MemoryEngine {
   readonly budgets: BudgetBook
   readonly now: () => number
   private readonly habitProfiles: () => HabitProfile[]
+  private readonly appends = new Map<MemoryLayer, number>()
+
+  /** Physical rows written to one layer file before it is compacted in place. */
+  static readonly COMPACT_EVERY = 256
 
   constructor(options: {
     store: LayeredStore
@@ -118,13 +122,61 @@ export class MemoryEngine {
     this.habitProfiles = options.habitProfiles ?? (() => [])
   }
 
+  /**
+   * Append one row, then compact that layer once enough rows have accumulated.
+   *
+   * Recall/feedback/tombstone updates are append-only by design (auditable
+   * history), but without compaction an append per recall makes the NDJSON file
+   * grow without bound: 200 recalls of a single memory grew it from 454 B to
+   * 104 KB in a probe, and every recall re-parses the whole file. Compaction
+   * keeps the last physical row per (id, version), so version history and
+   * tombstone/confidence updates survive while stale duplicates are dropped.
+   */
+  private append(layer: MemoryLayer, entry: MemoryEntry): void {
+    this.store.appendEntry(layer, entry)
+    const count = (this.appends.get(layer) ?? 0) + 1
+    if (count >= MemoryEngine.COMPACT_EVERY) {
+      this.appends.set(layer, 0)
+      this.compact(layer)
+    } else {
+      this.appends.set(layer, count)
+    }
+  }
+
+  /** Merge duplicate (id, version) rows in one layer. Returns rows removed. */
+  compact(layer: MemoryLayer): number {
+    const rows = this.store.readLayer(layer)
+    if (rows.length === 0) return 0
+    const last = new Map<string, MemoryEntry>()
+    for (const row of rows) last.set(`${row.id}@${row.version}`, row)
+    const kept = [...last.values()]
+    if (kept.length === rows.length) return 0
+    this.store.rewriteLayer(layer, kept)
+    this.store.appendAudit({
+      type: 'compact',
+      actor: 'system',
+      layer,
+      detail: `compacted ${rows.length} row(s) -> ${kept.length} row(s)`,
+    })
+    return rows.length - kept.length
+  }
+
   /** Write one memory. Guard runs before anything touches disk. */
   write(input: MemoryWriteInput, layer: MemoryLayer, actor: 'user' | 'agent' = 'agent', sessionId?: string): WriteOutcome {
     const title = input.title.trim()
     const body = input.body.trim()
     if (!title || !body) throw new Error('memory_remember requires non-empty title and body')
     const path = `${layer}/entries.ndjson`
-    const content = `${title}\n${body}`
+    // Scan EVERY field that is persisted or later rendered into the resident
+    // index (title, summary, tags, body). Scanning only title+body let a secret
+    // ride in through `tags` or `summary` and reach both disk and the prompt.
+    const summary = (input.summary ?? '').trim()
+    const tags = Array.isArray(input.tags) ? input.tags.map((tag) => String(tag)) : []
+    const scanLines = [title]
+    if (summary) scanLines.push(`summary: ${summary}`)
+    if (tags.length) scanLines.push(`tags: ${tags.join(', ')}`)
+    scanLines.push(body)
+    const content = scanLines.join('\n')
     const guard = this.guard.scan(content)
     if (!guard.ok) {
       const detail = this.guard.describe(guard.violations, path)
@@ -170,8 +222,8 @@ export class MemoryEngine {
       layer,
       scope,
       title,
-      tags: (input.tags ?? []).map((t) => t.trim()).filter(Boolean).slice(0, 12),
-      summary: firstSentence(input.summary ?? body, 140),
+      tags: tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 12),
+      summary: firstSentence(summary || body, 140),
       body,
       status: 'active',
       priority: input.priority ?? 'P2',
@@ -194,7 +246,7 @@ export class MemoryEngine {
         e.id === previous.id && e.version === previous.version ? archived : e,
       )
       this.store.rewriteLayer(layer, rewritten)
-      this.store.appendEntry(layer, entry)
+      this.append(layer, entry)
       this.store.appendAudit({
         type: 'supersede',
         actor,
@@ -204,7 +256,7 @@ export class MemoryEngine {
         detail: `v${version} supersedes v${previous.version}; history retained`,
       })
     } else {
-      this.store.appendEntry(layer, entry)
+      this.append(layer, entry)
     }
     this.store.appendAudit({
       type: 'remember',
@@ -369,28 +421,32 @@ export class MemoryEngine {
       lastRecalledSession: sessionId,
       updatedAt: current.updatedAt,
     }
-    this.store.appendEntry(layer, updated)
+    this.append(layer, updated)
   }
 
   /** Full body disclosure for one explicit id; still bounded per call. */
-  expand(id: string, sessionId: string, maxChars?: number): { found: boolean; entry?: MemoryEntry; body?: string; chars: number; tier: DisclosedTier } {
+  expand(id: string, sessionId: string, maxChars?: number): { found: boolean; entry?: MemoryEntry; body?: string; chars: number; tier: DisclosedTier; remainingChars: number } {
     const session = this.budgets.session(sessionId)
     const totals = this.findAllCurrent()
     const entry = totals.find((e) => e.id === id)
-    if (!entry) return { found: false, chars: 0, tier: session.tier }
-    const cap = Math.max(200, Math.min(maxChars ?? 8_000, this.config.budget.recallMaxCharsPerMemory * 4))
-    const body = entry.body.length > cap ? `${entry.body.slice(0, cap - 3)}...` : entry.body
+    if (!entry) return { found: false, chars: 0, tier: session.tier, remainingChars: session.remaining() }
+    // The session recall budget is a hard cap, not advisory: an explicit expand
+    // may never inject more characters than the session has left, so repeated
+    // expands cannot bypass the progressive-disclosure budget.
+    const requested = Math.max(200, Math.min(maxChars ?? 8_000, this.config.budget.recallMaxCharsPerMemory * 4))
+    const cap = Math.min(requested, session.remaining())
+    const body = cap <= 0 ? '' : entry.body.length > cap ? `${entry.body.slice(0, Math.max(0, cap - 3))}...` : entry.body
     session.spentChars += body.length
-    session.disclosed.add(entry.id)
+    if (body.length > 0) session.disclosed.add(entry.id)
     this.store.appendAudit({
       type: 'expand',
       actor: 'agent',
       sessionId,
       entryId: entry.id,
       layer: entry.layer,
-      detail: `expanded ${body.length} chars (cap ${cap})`,
+      detail: `expanded ${body.length} chars (cap ${cap}, remaining ${session.remaining()})`,
     })
-    return { found: true, entry, body, chars: body.length, tier: session.tier }
+    return { found: true, entry, body, chars: body.length, tier: session.tier, remainingChars: session.remaining() }
   }
 
   /** Tombstone write; P0 and user-authored entries need an explicit force. */
@@ -403,7 +459,7 @@ export class MemoryEngine {
       return { ok: false, id, reason: 'protected: P0 or user-authored memory requires force=true from an explicit user instruction' }
     }
     const now = this.now()
-    this.store.appendEntry(entry.layer, { ...entry, status: 'tombstone', updatedAt: now })
+    this.append(entry.layer, { ...entry, status: 'tombstone', updatedAt: now })
     this.store.appendAudit({
       type: 'forget',
       actor,
@@ -420,7 +476,7 @@ export class MemoryEngine {
     const delta = signal === 'useful' ? 0.08 : -0.2
     const confidence = Math.max(0.05, Math.min(1, Math.round((entry.confidence + delta) * 100) / 100))
     const flagged = signal === 'wrong' ? true : entry.flagged
-    this.store.appendEntry(entry.layer, { ...entry, confidence, flagged, updatedAt: this.now() })
+    this.append(entry.layer, { ...entry, confidence, flagged, updatedAt: this.now() })
     this.store.appendAudit({
       type: 'feedback',
       actor,
@@ -615,15 +671,29 @@ export class MemoryEngine {
    * dormant (never injected); only `auto` profiles become active. The status is
    * passed in by HabitEngine, which only sets `auto` after two user gates.
    */
+  /**
+   * Guard precheck for a habit profile.
+   *
+   * The pattern comes from a judge/rule over free-form user text and later
+   * reaches the resident index, so it must pass the same credential scan as a
+   * normal write. Returns the redacted description (line + pattern name only)
+   * when a secret pattern is present.
+   */
+  validateHabitProfile(profile: HabitProfile): { ok: boolean; detail?: string } {
+    const title = `Habit · ${profile.pattern}`
+    const body = `pattern: ${profile.pattern}\ncategory: ${profile.category}`
+    const guard = this.guard.scan(`${title}\n${body}`)
+    if (guard.ok) return { ok: true }
+    const detail = this.guard.describe(guard.violations, 'habit/entries.ndjson')
+    this.store.appendAudit({ type: 'write-guard-reject', actor: 'system', layer: 'habit', detail })
+    return { ok: false, detail }
+  }
+
   upsertHabitMemory(profile: HabitProfile): { id: string; version: number; status: MemoryEntry['status'] } {
     const layer: MemoryLayer = 'habit'
     const now = this.now()
     const entries = this.store.readLayer(layer)
     const title = `Habit · ${profile.pattern}`
-    const prior = entries
-      .filter((e) => e.title.trim().toLowerCase() === title.trim().toLowerCase())
-      .sort((a, b) => b.version - a.version)[0]
-    const status: MemoryEntry['status'] = profile.status === 'auto' ? 'active' : 'dormant'
     const body = [
       `pattern: ${profile.pattern}`,
       `category: ${profile.category}`,
@@ -632,6 +702,18 @@ export class MemoryEngine {
       `evidence: ${profile.evidenceCount}`,
       `sessions: ${profile.sessions.length} (${profile.sessions.join(', ')})`,
     ].join('\n')
+    // Defense in depth: never persist a habit pattern that failed the scan,
+    // whichever caller reached this method.
+    const guarded = this.guard.scan(`${title}\n${body}`)
+    if (!guarded.ok) {
+      const detail = this.guard.describe(guarded.violations, 'habit/entries.ndjson')
+      this.store.appendAudit({ type: 'write-guard-reject', actor: 'system', layer, detail })
+      throw new GuardRejection(detail, guarded.violations)
+    }
+    const prior = entries
+      .filter((e) => e.title.trim().toLowerCase() === title.trim().toLowerCase())
+      .sort((a, b) => b.version - a.version)[0]
+    const status: MemoryEntry['status'] = profile.status === 'auto' ? 'active' : 'dormant'
     const entry: MemoryEntry = {
       id: prior?.id ?? shortId('habit'),
       version: prior ? prior.version + 1 : 1,
@@ -652,7 +734,7 @@ export class MemoryEngine {
       recallCount: prior?.recallCount ?? 0,
       supersedes: prior?.version,
     }
-    this.store.appendEntry(layer, entry)
+    this.append(layer, entry)
     this.store.appendAudit({
       type: 'habit-candidate',
       actor: 'system',
@@ -667,12 +749,12 @@ export class MemoryEngine {
   disableHabitMemory(profile: HabitProfile): void {
     const layer: MemoryLayer = 'habit'
     const entries = this.store.readLayer(layer)
-    const title = `Habit · ${profile.pattern}`.trim().toLowerCase()
+    const title = `Habit · ${profile.pattern}`
     const prior = entries
-      .filter((e) => e.title.trim().toLowerCase() === title)
+      .filter((e) => e.title.trim().toLowerCase() === title.trim().toLowerCase())
       .sort((a, b) => b.version - a.version)[0]
     if (!prior) return
-    this.store.appendEntry(layer, { ...prior, status: 'tombstone', updatedAt: this.now() })
+    this.append(layer, { ...prior, status: 'tombstone', updatedAt: this.now() })
     this.store.appendAudit({
       type: 'habit-delete',
       actor: 'user',

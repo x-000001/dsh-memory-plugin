@@ -497,3 +497,100 @@ test('invariant report covers the required guardrails', () => {
   const guardSource = readFileSync(new URL('../src/guard.ts', import.meta.url), 'utf8')
   assert.equal(guardSource.includes('console.log'), false)
 })
+
+// ---------------------------------------------------------------------------
+// 9. Audit regressions: bounded NDJSON growth and bounded budget bookkeeping
+// ---------------------------------------------------------------------------
+
+test('recall-driven appends are compacted so a layer file stays bounded', async (t) => {
+  const harness = createHarness()
+  t.after(() => harness.cleanup())
+  const runtime = harness.runtime
+  const { memory } = runtime.require()
+  const written = memory.write({ title: 'Compaction fact', body: 'compactiontoken repeated recall' }, 'project', 'agent', 's1')
+  const entriesFile = join(runtime.projectDir!, 'entries.ndjson')
+  const before = readFileSync(entriesFile, 'utf8').trim().split('\n').filter(Boolean).length
+  for (let i = 0; i < 400; i++) {
+    memory.recall({ sessionId: 's1', query: 'compactiontoken', allowRepeat: true })
+  }
+  const rows = readFileSync(entriesFile, 'utf8').trim().split('\n').filter(Boolean)
+  assert.equal(before, 1)
+  // 400 appends without compaction produced 401 rows (~200 KB); with the
+  // compaction threshold the file is bounded while the entry survives.
+  assert.ok(rows.length < 300, `expected bounded NDJSON, got ${rows.length} rows`)
+  assert.equal(memory.findAllCurrent('project').some((entry) => entry.id === written.id), true)
+  const fresh = memory.recall({ sessionId: 'compaction-fresh', query: 'compactiontoken' })
+  assert.equal(fresh.items.length, 1)
+})
+
+test('budget bookkeeping caps tracked sessions instead of growing forever', async (t) => {
+  const harness = createHarness()
+  t.after(() => harness.cleanup())
+  const { memory } = harness.runtime.require()
+  for (let i = 0; i < 600; i++) memory.budgets.session(`budget-session-${i}`)
+  assert.equal(memory.budgets.sessionCount, 512)
+  assert.equal(memory.budgets.session('budget-session-599').sessionId, 'budget-session-599')
+})
+
+test('write-guard covers tags and summary, not just title and body', async (t) => {
+  const harness = createHarness()
+  t.after(() => harness.cleanup())
+  const { memory } = harness.runtime.require()
+  const secret = 'sk-proj-AbCdEf0123456789GhIjKlMnOpQrStUv'
+
+  const viaTags = () => memory.write({ title: 'Tag bypass', body: 'benign body', tags: [secret] }, 'project', 'agent', 's1')
+  assert.throws(viaTags, (error: unknown) => error instanceof GuardRejection && !error.message.includes(secret))
+  const viaSummary = () => memory.write({ title: 'Summary bypass', body: 'benign body', summary: 'password=' + secret }, 'project', 'agent', 's1')
+  assert.throws(viaSummary, (error: unknown) => error instanceof GuardRejection && !error.message.includes(secret))
+
+  assert.equal(memory.findAllCurrent('project').length, 0)
+})
+
+test('expand cannot exceed the remaining session recall budget', async (t) => {
+  const harness = createHarness({ config: { budget: { ...DEFAULT_CONFIG.budget, recallSessionBudgetChars: 260, recallMaxTotalChars: 220, recallMaxResults: 4, recallMaxCharsPerMemory: 120 } } })
+  t.after(() => harness.cleanup())
+  const { memory } = harness.runtime.require()
+  const written = memory.write({ title: 'Budget fact', body: 'budgettoken ' + 'x'.repeat(900) }, 'project', 'agent', 's1')
+
+  const first = memory.expand(written.id, 's1', 4_000)
+  assert.equal(first.found, true)
+  assert.ok(first.chars <= 260, `expand respected the session budget (${first.chars})`)
+
+  const again = memory.expand(written.id, 's1', 4_000)
+  assert.equal(again.found, true)
+  assert.equal(again.chars, 0)
+  assert.equal(again.remainingChars, 0)
+})
+
+test('habit patterns pass through the write-guard before being persisted', async (t) => {
+  const harness = createHarness()
+  t.after(() => harness.cleanup())
+  const { memory } = harness.runtime.require()
+  const verdict = memory.validateHabitProfile({ id: 'x', status: 'auto', pattern: 'password=hunter2secret', category: 'style', confidence: 0.9, evidenceCount: 1, sessions: ['s1'], pinned: false, createdAt: 0, updatedAt: 0 })
+  assert.equal(verdict.ok, false)
+  assert.match(String(verdict.detail), /password-assignment/)
+  assert.equal(String(verdict.detail).includes('hunter2secret'), false)
+})
+
+test('unreadable NDJSON lines are visible as a degraded index and recover when fixed', async (t) => {
+  const harness = createHarness()
+  t.after(() => harness.cleanup())
+  const { memory } = harness.runtime.require()
+  const written = memory.write({ title: 'Survives a bad line', body: 'corrupttoken still readable' }, 'project', 'agent', 's1')
+
+  const projectEntries = join(harness.runtime.projectDir as string, 'entries.ndjson')
+  appendFileSync(projectEntries, '{this is not json}\n', 'utf8')
+
+  const degraded = harness.runtime.refresh(true)
+  assert.equal(harness.runtime.health.snapshot().status, 'degraded')
+  assert.match(harness.runtime.health.warningLine(), /corrupt-layer-lines/)
+  assert.ok(degraded.text.includes('corrupt-layer-lines'), 'the injected block carries the warning')
+
+  const recall = memory.recall({ sessionId: 's1', query: 'corrupttoken' })
+  assert.equal(recall.items.length, 1, 'readable entries stay recallable')
+
+  writeFileSync(projectEntries, readFileSync(projectEntries, 'utf8').replace('{this is not json}\n', ''), 'utf8')
+  const recovered = harness.runtime.refresh(true)
+  assert.equal(harness.runtime.health.snapshot().status, 'active')
+  assert.equal(recovered.text.includes('corrupt-layer-lines'), false)
+})
