@@ -467,9 +467,12 @@ logs, tarballs).
   `deepseek-harness`, `long-term-memory`, `cordis-plugin`).
 * **CI is green**: run [39132322238](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39132322238)
   on `main` (`55c053c`) passed every step — frozen install, build, typecheck, 38 tests, package-shape
-  gate and pack dry-run. Two earlier red runs exposed CI-only defects that the local sandbox could not
-  (missing `@types/node` for `"types": ["node"]`, then an optional `vitest/config` import inside the tsc
-  project); both fixes are in the history (`8d5fd3a`, `55c053c`).
+  gate and pack dry-run. The audit hardening commit `46b61e3` re-ran the same gate as
+  [run 39135601378](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39135601378) and passed
+  with the expanded 38-test suite (23 plugin + 15 artifact). Two earlier red runs exposed CI-only
+  defects that the local sandbox could not (missing `@types/node` for `"types": ["node"]`, then an
+  optional `vitest/config` import inside the tsc project); both fixes are in the history
+  (`8d5fd3a`, `55c053c`).
 * **Release gate exercised**: tag `v0.1.0` ran the Release workflow. The `release gate` job passed the
   full build/typecheck/test/package shape; the `publish to npm + GitHub Release` job then stopped at
   `Require NPM_TOKEN` with `::error::`, and the Publish + Create GitHub Release steps were **skipped**.

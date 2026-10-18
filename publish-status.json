@@ -26,12 +26,12 @@
     ],
     "status": "success",
     "observed": {
-      "runId": 39132322238,
-      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39132322238",
-      "commit": "55c053c",
+      "runId": 39135601378,
+      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39135601378",
+      "commit": "46b61e3",
       "branch": "main",
       "conclusion": "success",
-      "note": "earlier runs 39132112953 and 39132255430 failed on CI-only typecheck defects (missing @types/node; optional vitest/config in the tsc project); both are fixed in 8d5fd3a and 55c053c"
+      "note": "audit-hardening commit: frozen install, build, typecheck, 38 tests (23 plugin + 15 artifact), package shape and pack dry-run all passed. Earlier green run 39132322238 on 55c053c; earlier runs 39132112953 and 39132255430 failed on CI-only typecheck defects (missing @types/node; optional vitest/config in the tsc project), both fixed in 8d5fd3a and 55c053c"
     }
   },
   "install": {
@@ -225,6 +225,12 @@
     "remainingRisks": [
       "the resident index is rebuilt whenever memory changes, so a write mid-session is one intentional prefix change (cache miss) — documented tradeoff, not silent flapping",
       "the running DSH process still needs a restart to pick up the audited lib (module cache)"
-    ]
+    ],
+    "ci": {
+      "runId": 39135601378,
+      "commit": "46b61e3",
+      "status": "success",
+      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39135601378"
+    }
   }
 }
