@@ -274,7 +274,10 @@ export class MemoryEngine {
     const entries = this.store.readLayer(layer)
     const mine = entries.filter((e) => e.id === id)
     if (!mine.length) return null
-    return mine.reduce((best, cur) => (cur.version > best.version ? cur : best))
+    // Append-only log: for the same version the LAST line is the newest state
+    // (bumpRecall/feedback/tombstone re-append). Using `>` picked the first line
+    // and made recallCount/bumpRecall updates invisible.
+    return mine.reduce((best, cur) => (cur.version >= best.version ? cur : best))
   }
 
   findAllCurrent(layer?: MemoryLayer): MemoryEntry[] {
