@@ -26,12 +26,12 @@
     ],
     "status": "success",
     "observed": {
-      "runId": 39135601378,
-      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39135601378",
-      "commit": "46b61e3",
+      "runId": 39137174421,
+      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39137174421",
+      "commit": "8b76296",
       "branch": "main",
       "conclusion": "success",
-      "note": "audit-hardening commit: frozen install, build, typecheck, 38 tests (23 plugin + 15 artifact), package shape and pack dry-run all passed. Earlier green run 39132322238 on 55c053c; earlier runs 39132112953 and 39132255430 failed on CI-only typecheck defects (missing @types/node; optional vitest/config in the tsc project), both fixed in 8d5fd3a and 55c053c"
+      "note": "audit pass 2: frozen install, build, typecheck, 48 tests (23 plugin + 15 artifact + 10 audit), package shape and pack dry-run all passed on the eight-fix + probes tree. Earlier green runs: 39135601378 on 46b61e3 (38 tests) and 39132322238 on 55c053c; earlier runs 39132112953 and 39132255430 failed on CI-only typecheck defects (missing @types/node; optional vitest/config in the tsc project), both fixed in 8d5fd3a and 55c053c"
     }
   },
   "install": {
@@ -266,7 +266,13 @@
       "packageChecks": "14/14 pass",
       "packDryRun": "same 19-file shape (lib/**, cordis.patch.yml, package.json, README.md, LICENSE; no src/tests/.dsh)",
       "fixCommits": ["baa0df2", "dc4fe2b", "dc52117", "00dedcb", "7f4d2a5", "a58f7ac", "94c912c", "c7c47e2"],
-      "testCommit": "a0b5254"
+      "testCommit": "a0b5254",
+      "ci": {
+        "runId": 39137174421,
+        "commit": "8b76296",
+        "conclusion": "success",
+        "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39137174421"
+      }
     },
     "functionalEquivalence": "No public API, tool parameter/return, config default, data-file format, injection text or health-state semantic was changed. The existing 38 tests pass unmodified; only the eight defective behaviours changed.",
     "docsCorrections": [

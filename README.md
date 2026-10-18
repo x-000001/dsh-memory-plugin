@@ -493,7 +493,10 @@ logs, tarballs).
   on `main` (`55c053c`) passed every step — frozen install, build, typecheck, 38 tests, package-shape
   gate and pack dry-run. The audit hardening commit `46b61e3` re-ran the same gate as
   [run 39135601378](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39135601378) and passed
-  with the expanded 38-test suite (23 plugin + 15 artifact). Two earlier red runs exposed CI-only
+  with the then-current suite. Audit pass 2 (`d875d17..8b76296`, eight per-defect fixes plus the audit
+  probes) passed as
+  [run 39137174421](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39137174421) with the
+  expanded **48-test** suite (23 plugin + 15 artifact + 10 audit). Two earlier red runs exposed CI-only
   defects that the local sandbox could not (missing `@types/node` for `"types": ["node"]`, then an
   optional `vitest/config` import inside the tsc project); both fixes are in the history
   (`8d5fd3a`, `55c053c`).
@@ -510,7 +513,7 @@ Observed by `dsh-plugin-cicd` (or any tool that reads repo status) from
 [`publish-status.json`](publish-status.json) and from this line:
 
 ```text
-dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39132322238 on main@55c053c","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes","audit":"12 defects fixed with regression tests; see publish-status.json audit block"}
+dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39137174421 on main@8b76296 (48 tests)","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes","audit":"12 defects (pass 1) + 8 defects (pass 2) fixed with regression tests; see publish-status.json audit/audit2 blocks"}
 ```
 
 The sidebar/settings card created by the client half shows the same health/status data live
