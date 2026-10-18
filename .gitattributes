@@ -1,0 +1,5 @@
+# Keep the repository byte-stable across platforms: LF in the index and in the
+# working tree. Shell hook and YAML files must not be checked out with CRLF.
+* text=auto eol=lf
+*.png binary
+*.tgz binary
