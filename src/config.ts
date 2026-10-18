@@ -64,11 +64,15 @@ function mergeSection<T extends object>(base: T, patch: Partial<T> | undefined):
 /** Deep-merge the patch into defaults; unknown keys are ignored on purpose. */
 export function resolveConfig(raw: Partial<MemoryPluginConfig> | undefined): MemoryPluginConfig {
   if (!raw) return structuredClone(DEFAULT_CONFIG)
+  // A configured degradation order must be honored: the previous code always
+  // overwrote it with the default, silently ignoring `budget.degradeOrder`.
+  const budget = mergeSection(DEFAULT_BUDGET, raw.budget)
+  budget.degradeOrder = [...budget.degradeOrder]
   return {
     projectMemoryDir: raw.projectMemoryDir ?? DEFAULT_CONFIG.projectMemoryDir,
     globalMemoryDir: raw.globalMemoryDir ?? DEFAULT_CONFIG.globalMemoryDir,
     habitDir: raw.habitDir ?? DEFAULT_CONFIG.habitDir,
-    budget: { ...mergeSection(DEFAULT_BUDGET, raw.budget), degradeOrder: [...DEFAULT_BUDGET.degradeOrder] },
+    budget,
     lifecycle: mergeSection(DEFAULT_CONFIG.lifecycle, raw.lifecycle),
     habit: mergeSection(DEFAULT_CONFIG.habit, raw.habit),
     guard: {
