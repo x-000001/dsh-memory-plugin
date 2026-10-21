@@ -338,6 +338,8 @@ pnpm verify      # build --check + package gate + tests (same gate as CI)
 * `tests/plugin.spec.ts` — 23 acceptance tests over an isolated temp `DSH_HOME` + project fixtures.
 * `tests/lib.spec.ts` — 15 artifact/packaging/audit tests against the **built** `lib/`.
 * `tests/audit.spec.ts` — 10 regression probes for the second audit pass (BUG-1…BUG-8 + two passing probes).
+* `tests/fixes.spec.ts` — 4 regressions for the v6' acceptance T0 root causes (project-root detection,
+  project-layer-only degradation, session-workspace anchoring, lossless `memory_status` JSON).
 * `tests/harness.ts` — fixtures (`createHarness`, fake judge, failing judge, correction feeder).
 
 ### Audit (source review + executable probes)
@@ -384,6 +386,24 @@ test phase, before the fix) and its own revertible commit.
 | BUG-8 | write dedupe matched archived revisions, so re-writing superseded content was silently dropped | `fix(memory): dedupe writes only against visible revisions` |
 
 
+### v6' acceptance (T0) root causes and fixes
+
+The v6' acceptance prompt runs serial gates: if T0 (environment + basic memory loop) is not
+self-consistent, every later T1…T7 result is invalid. T0 was red on the live install; the real
+runtime exposed three defects the local suite had not covered (each now has a regression in
+`tests/fixes.spec.ts`):
+
+| ID | Symptom in real DSH | Root cause | Fix |
+| --- | --- | --- | --- |
+| T0-1 | `memory_remember` failed with `memory roots must not nest: project … vs global …`, health `unavailable`, plugin "on but 0 entries effective" | DSH's process cwd is `~`; `findProjectRoot()` treated `~/.dsh` (which **is** `DSH_HOME`) as a project marker, so the project store resolved to `~/.dsh/memory` — the same root as global memory | project-root detection ignores `DSH_HOME` and any DSH-home-shaped `.dsh` (holds `profiles/`, `storages/` or `cordis.yml`); real repos are found via `.git` |
+| T0-1b | even with detection fixed, a home-started process has no repository at all | project layer was bound once from the process cwd at `apply()` | runtime now anchors the project layer to `Session.header.cwd` (the authoritative workspace) from `session/event` and from each tool execution, at most once per process; global + habit memory work before anchoring |
+| T0-2 | instead of just the project layer being off, the whole runtime went `unavailable` | a project/global root alias made the `LayeredStore` constructor throw | the store falls back to `projectRoot: null` (global + habit stay fully usable) and records `project-layer-unavailable` with the concrete message in the health snapshot and injected warning |
+| T0-3 | `memory_status` output contained `"cache":undefined` fields — not valid lossless JSON | the non-verbose summary always listed keys that only exist on the healthy path | the summary only includes fields present in the report; unavailable runtimes return `{ok:false, health, warning}` |
+
+Real live evidence after the fix (same DSH profile): the system-prompt memory index shows project-layer
+entries and `health.status` is `active` with `projectDir` under the opened workspace, not under
+`$DSH_HOME`.
+
 ### Real-runtime verification (DSH 0.2.0-rc.1, Cordis 4.0.4)
 
 Beyond the local suite, the plugin was exercised against the real runtime:
@@ -406,9 +426,10 @@ Beyond the local suite, the plugin was exercised against the real runtime:
 ### Installed in this profile
 
 The bundle is installed into the live DSH profile (`dsh-plugin-memory` is in
-`dsh.profile.bundles`, linked to this repo). The running DSH process imported the pre-fix module, so
-the currently loaded fiber reports `1 entry did not activate`; the fixed `lib/` is what the loader
-reads on the next DSH restart. Nothing in the plugin itself needs changing for activation.
+`dsh.profile.bundles`, linked to this repo). The loader imports `lib/` on every process start, so any
+change to the plugin requires a DSH restart before it becomes active. The v6' T0 fixes above were
+verified by the local suite and must be picked up by the next restart; after that restart the project
+layer anchors to the opened workspace and `memory_status` reports it.
 
 
 Acceptance evidence map:
@@ -424,6 +445,7 @@ Acceptance evidence map:
 | budgets configurable/observable/degradable in order | plugin.spec "recall is bounded, deduped … degrades in the configured order", "index respects the hard budget…" |
 | runs with no vector backend / no LLM | whole suite: no embeddings, no network, `llm` absent unless injected |
 | rollback / durability | plugin.spec "durable state survives a runtime restart and the audit chain verifies"; `ctx.effect` disposers on unload |
+| real-DSH project layer from a home-started process (v6' T0) | fixes.spec "findProjectRoot ignores a DSH_HOME `.dsh`…", "…degrades only the project layer…", "a session workspace anchors the project layer exactly once", "memory_status … lossless JSON" |
 | habit review UI | client half `settings.section`; HTTP `POST /dsh-memory/habits` (list/confirm/promote/discard/delete) |
 
 ---

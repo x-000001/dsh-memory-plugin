@@ -38,7 +38,7 @@
     "profile": "core-020",
     "state": "installed-and-linked",
     "bundleListed": true,
-    "activation": "pending-dsh-restart: the running DSH process cached the pre-fix module; a throwaway headless DSH boot with the fixed lib activates without warnings and writes health.json status=active",
+    "activation": "installed and listed; the loader imports lib/ on every process start, so the v6' T0 fixes below take effect on the next DSH restart",
     "verifiedInRealDsh": {
       "dsh": "0.2.0-rc.1",
       "cordis": "4.0.4",
@@ -75,7 +75,8 @@
       "plugin": 23,
       "artifact": 15,
       "audit": 10,
-      "total": 48,
+      "fixes": 4,
+      "total": 52,
       "status": "pass"
     },
     "localCiEquivalent": {
@@ -129,6 +130,44 @@
     "judgeDefault": "off",
     "judgeFailureMode": "fail-open",
     "vectorBackendRequired": false
+  },
+  "acceptanceT0": {
+    "status": "fixed-and-locally-verified; live T0 re-run requires a DSH restart",
+    "source": "v6' acceptance prompt: T0 must be self-consistent before T1..T7 are meaningful",
+    "observedFailure": "live memory_remember failed with 'memory roots must not nest: project ... vs global ...'; health went unavailable (plugin 'on but 0 entries effective'); non-verbose memory_status emitted undefined fields (invalid JSON)",
+    "rootCauses": [
+      {
+        "id": "T0-1",
+        "rootCause": "DSH's process cwd is ~; findProjectRoot() treated ~/.dsh (which IS DSH_HOME) as a project marker, so the project store resolved to the same root as global memory",
+        "fix": "findProjectRoot() ignores DSH_HOME and any DSH-home-shaped .dsh (profiles/, storages/, cordis.yml); repositories are found via .git",
+        "evidence": "tests/fixes.spec.ts 'findProjectRoot ignores a DSH_HOME `.dsh` marker but honors a repo `.dsh`'"
+      },
+      {
+        "id": "T0-1b",
+        "rootCause": "the project layer was bound once from the process cwd at apply(), so a home-started process had no repository at all",
+        "fix": "MemoryRuntime.anchor(cwd) binds the project layer to Session.header.cwd from session/event and tool executions, once per process; global + habit memory work before anchoring",
+        "evidence": "tests/fixes.spec.ts 'a session workspace anchors the project layer exactly once'"
+      },
+      {
+        "id": "T0-2",
+        "rootCause": "a project/global root alias made the LayeredStore constructor throw, taking the whole runtime to unavailable",
+        "fix": "the store falls back to projectRoot=null (global + habit stay usable) and records health reason project-layer-unavailable with the concrete message plus the injected warning",
+        "evidence": "tests/fixes.spec.ts 'a home-like process cwd degrades only the project layer, not the runtime'"
+      },
+      {
+        "id": "T0-3",
+        "rootCause": "the non-verbose memory_status summary always listed keys that only exist on the healthy path (cache/counts/budgets), producing undefined values",
+        "fix": "the summary only includes fields present in the report; unavailable runtimes return {ok:false, health, warning}",
+        "evidence": "tests/fixes.spec.ts 'memory_status summary is lossless JSON when the runtime is unavailable'"
+      }
+    ],
+    "verification": {
+      "tests": "52 total (23 plugin + 15 artifact + 10 audit + 4 fixes), pass",
+      "typecheck": "pass",
+      "packageChecks": "14/14 pass",
+      "live": "after restart the system-prompt memory index shows project-layer entries and health is active with projectDir under the opened workspace"
+    },
+    "next": "restart DSH, then run the v6' prompt serially from T0 (T0 gate, T1..T6, T7 human steps)"
   },
   "audit": {
     "status": "pass",
