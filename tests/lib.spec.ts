@@ -294,15 +294,21 @@ test('habit observation reads the real SessionEvent envelope (event.data)', asyn
   const signalsFile = join(dshHome, 'storages', 'habit', 'signals.ndjson')
   const envelope = (text: string) => ({ type: 'user/message', seq: 1, time: Date.now(), data: { role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } } })
   const correction = '\u4e0d\u5bf9\uff0c\u5e94\u8be5\u7528 tabs\u3002'
-  const handler = handlers['session/event'][0]
-  for (let i = 0; i < 3; i++) handler({ id: 'habit-envelope-session' }, envelope(correction))
+  const eventHandlers: Array<(session: any, event: any) => void> = handlers['session/event'] ?? []
+  assert.ok(eventHandlers.length >= 1, 'session/event is observed')
+  // Every listener must see the event: one anchors the project layer, another
+  // feeds deterministic habit observation.
+  const dispatch = (session: any, event: any) => {
+    for (const eventHandler of eventHandlers) eventHandler(session, event)
+  }
+  for (let i = 0; i < 3; i++) dispatch({ id: 'habit-envelope-session' }, envelope(correction))
   await new Promise((resolve) => setTimeout(resolve, 80))
   const lines = readFileSync(signalsFile, 'utf8').trim().split('\n').filter(Boolean)
   assert.ok(lines.length >= 3, `expected >=3 habit signals, got ${lines.length}`)
 
   // Plugin-sourced user-role messages must not train habits.
   const before = lines.length
-  handler({ id: 'habit-envelope-session' }, { ...envelope(correction), data: { role: 'user', content: [{ type: 'text', text: correction }], source: { kind: 'system-prompt' } } })
+  dispatch({ id: 'habit-envelope-session' }, { ...envelope(correction), data: { role: 'user', content: [{ type: 'text', text: correction }], source: { kind: 'system-prompt' } } })
   await new Promise((resolve) => setTimeout(resolve, 40))
   const after = readFileSync(signalsFile, 'utf8').trim().split('\n').filter(Boolean).length
   assert.equal(after, before)
