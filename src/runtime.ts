@@ -17,11 +17,31 @@ import { buildDisclosure, disclosureSignature, StablePrefix, type DisclosureBloc
 import { planIndex } from './budget.ts'
 import type { HabitProfile, MemoryEntry, MemoryPluginConfig } from './types.ts'
 
+/**
+ * True when a `.dsh` directory looks like a DSH home (it holds DSH's own
+ * profiles/storages/cordis.yml) rather than a project memory folder.
+ */
+function looksLikeDshHome(marker: string): boolean {
+  return (
+    existsSync(join(marker, 'profiles')) ||
+    existsSync(join(marker, 'storages')) ||
+    existsSync(join(marker, 'cordis.yml'))
+  )
+}
+
 /** Walk up from cwd looking for a repo marker; null outside a repo. */
-export function findProjectRoot(cwd: string): string | null {
+export function findProjectRoot(cwd: string, dshHome?: string): string | null {
+  const home = resolve(dshHome ?? resolveDshHome())
   let dir = resolve(cwd)
   for (let i = 0; i < 64; i++) {
-    if (existsSync(join(dir, '.git')) || existsSync(join(dir, '.dsh'))) return dir
+    if (existsSync(join(dir, '.git'))) return dir
+    const marker = join(dir, '.dsh')
+    // `.dsh` is a project marker only when it is neither DSH_HOME itself nor
+    // another DSH home. A process started in `~` must not claim the home
+    // directory as the project root: its `.dsh` holds global/habit memory, and
+    // putting the project store inside it would alias the global root (a
+    // cross-layer write). Real repositories are found through `.git`.
+    if (existsSync(marker) && resolve(marker) !== home && !looksLikeDshHome(marker)) return dir
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
@@ -57,25 +77,30 @@ export class MemoryRuntime {
   readonly config: MemoryPluginConfig
   readonly cwd: string
   readonly dshHome: string
-  readonly projectRoot: string | null
-  /** Absolute <repo>/.dsh/memory (null outside a repo). */
+  projectRoot: string | null
+  /** Absolute <repo>/.dsh/memory (null outside a repo / before anchoring). */
   projectDir: string | null = null
-  readonly store: LayeredStore | null
-  readonly memory: MemoryEngine | null
-  readonly habit: HabitEngine | null
+  store: LayeredStore | null = null
+  memory: MemoryEngine | null = null
+  habit: HabitEngine | null = null
   readonly judge: HabitJudge
   readonly health: HealthTracker
   private readonly prefix = new StablePrefix()
   private warning = ''
   private lastSignature = ''
   private readonly now: () => number
+  /** Concrete error when only the project layer had to be dropped. */
+  private projectLayerError: string | null = null
+  /** True once the project layer is bound to a real repository. */
+  private anchored = false
 
   constructor(options: RuntimeOptions) {
     this.now = options.now ?? Date.now
     this.cwd = options.cwd
     this.dshHome = resolveDshHome(options.dshHome)
     this.config = resolveConfig(options.config)
-    this.projectRoot = findProjectRoot(this.cwd)
+    this.projectRoot = findProjectRoot(this.cwd, this.dshHome)
+    this.projectDir = this.projectRoot ? this.projectDirFor(this.projectRoot) : null
 
     const stateFile = join(this.dshHome, 'storages', 'memory', 'health.json')
     this.health = new HealthTracker({ stateFile, now: this.now })
@@ -86,67 +111,136 @@ export class MemoryRuntime {
       enabled: this.config.habit.judgeEnabled,
     })
 
-    let store: LayeredStore | null = null
-    try {
-      // Project memory must follow the repository at <repo>/.dsh/memory; the
-      // global/habit roots live under DSH_HOME and are never merged with it.
-      const projectDir = this.projectRoot
-        ? isAbsolute(this.config.projectMemoryDir)
-          ? this.config.projectMemoryDir
-          : join(this.projectRoot, this.config.projectMemoryDir)
-        : null
-      this.projectDir = projectDir
-      store = new LayeredStore({
-        projectRoot: projectDir,
-        globalRoot: resolveMemoryPath(this.config.globalMemoryDir, this.dshHome),
-        habitRoot: resolveMemoryPath(this.config.habitDir, this.dshHome),
-        spillRoot: join(this.dshHome, 'storages', 'memory', 'spill'),
-        now: this.now,
-      })
+    this.store = this.createStore(this.projectDir)
+    if (!this.store) {
+      // createStore() already recorded `unavailable` with the concrete reason.
+    } else if (this.projectLayerError) {
+      this.health.fail(
+        'storage',
+        'project-layer-unavailable',
+        `project memory disabled: ${this.projectLayerError}`,
+      )
+    } else if (!this.projectRoot) {
+      // The Cordis process may start in `~` or the install directory rather
+      // than the workspace. Global and habit memory keep working; the project
+      // layer stays disabled and visibly degraded until a session anchors it.
+      this.health.fail(
+        'storage',
+        'project-layer-unavailable',
+        `no repository root detected from ${this.cwd}; project memory disabled (global and habit memory remain available)`,
+      )
+    } else {
+      this.anchored = true
       this.health.ok('storage')
-    } catch (error) {
-      this.health.unavailableAll(`memory storage unavailable: ${(error as Error).message}`)
-      this.warning = this.health.warningLine()
     }
-    this.store = store
 
-    let memory: MemoryEngine | null = null
-    let habit: HabitEngine | null = null
-    if (store) {
-      try {
-        memory = new MemoryEngine({
-          store,
-          config: this.config,
-          habitProfiles: () => store?.readHabitProfiles() ?? [],
-          now: this.now,
-        })
-        habit = new HabitEngine({
-          store,
-          memory,
-          settings: this.config.habit,
-          judge: this.judge,
-          now: this.now,
-          onJudgeSuccess: () => this.health.ok('judge'),
-          onJudgeFailure: (reason) =>
-            this.health.fail('judge', 'judge-failed', `judge call failed (${reason}); fail-open rule mode kept the originals`),
-        })
-      } catch (error) {
-        this.health.fail('recall', 'engine-init-failed', `memory engine failed to initialize: ${(error as Error).message}`)
-      }
-    }
-    this.memory = memory
-    this.habit = habit
+    const engines = this.store ? this.buildEngines(this.store) : { memory: null, habit: null }
+    this.memory = engines.memory
+    this.habit = engines.habit
 
     this.health.setJudge(
       this.config.habit.judgeEnabled,
       this.judge.enabled,
       'judge model route unavailable; habit judgment falls back to rule mode (fail open)',
     )
-    if (this.config.habit.enabled && !habit) {
+    if (this.config.habit.enabled && !this.habit) {
       this.health.fail('habit', 'habit-engine-unavailable', 'habit learning unavailable: memory engine failed')
     }
     this.warning = this.health.warningLine()
     this.refresh(true)
+  }
+
+  private projectDirFor(projectRoot: string): string {
+    return isAbsolute(this.config.projectMemoryDir)
+      ? this.config.projectMemoryDir
+      : join(projectRoot, this.config.projectMemoryDir)
+  }
+
+  /**
+   * Open the layered store. A project root that aliases or nests the global /
+   * habit roots drops only the project layer instead of taking the whole
+   * runtime down; the concrete error is surfaced through `health`.
+   */
+  private createStore(projectDir: string | null): LayeredStore | null {
+    const globalRoot = resolveMemoryPath(this.config.globalMemoryDir, this.dshHome)
+    const habitRoot = resolveMemoryPath(this.config.habitDir, this.dshHome)
+    const spillRoot = join(this.dshHome, 'storages', 'memory', 'spill')
+    try {
+      return new LayeredStore({ projectRoot: projectDir, globalRoot, habitRoot, spillRoot, now: this.now })
+    } catch (error) {
+      const message = (error as Error).message
+      if (projectDir) {
+        try {
+          const fallback = new LayeredStore({ projectRoot: null, globalRoot, habitRoot, spillRoot, now: this.now })
+          this.projectLayerError = message
+          return fallback
+        } catch (fatal) {
+          this.health.unavailableAll(`memory storage unavailable: ${(fatal as Error).message}`)
+          return null
+        }
+      }
+      this.health.unavailableAll(`memory storage unavailable: ${message}`)
+      return null
+    }
+  }
+
+  private buildEngines(store: LayeredStore): { memory: MemoryEngine | null; habit: HabitEngine | null } {
+    try {
+      const memory = new MemoryEngine({
+        store,
+        config: this.config,
+        habitProfiles: () => this.profiles(),
+        now: this.now,
+      })
+      const habit = new HabitEngine({
+        store,
+        memory,
+        settings: this.config.habit,
+        judge: this.judge,
+        now: this.now,
+        onJudgeSuccess: () => this.health.ok('judge'),
+        onJudgeFailure: (reason) =>
+          this.health.fail('judge', 'judge-failed', `judge call failed (${reason}); fail-open rule mode kept the originals`),
+      })
+      return { memory, habit }
+    } catch (error) {
+      this.health.fail('recall', 'engine-init-failed', `memory engine failed to initialize: ${(error as Error).message}`)
+      return { memory: null, habit: null }
+    }
+  }
+
+  /**
+   * Re-anchor the process to the repository of a real session workspace.
+   *
+   * DSH's process cwd is often `~` or the install directory, where it says
+   * nothing about the repository the user opened. The session header carries
+   * the authoritative workspace (`Session.header.cwd`); the first session that
+   * has one anchors the project layer. Anchoring happens at most once per
+   * process, so subsequent sessions keep sharing the first repository
+   * (documented limitation).
+   */
+  anchor(cwd: string): boolean {
+    if (this.anchored || !cwd) return false
+    const projectRoot = findProjectRoot(cwd, this.dshHome)
+    if (!projectRoot) return false
+    const projectDir = this.projectDirFor(projectRoot)
+    const store = this.createStore(projectDir)
+    if (!store) return false
+    const engines = this.buildEngines(store)
+    if (!engines.memory) return false
+    this.projectRoot = projectRoot
+    this.projectDir = projectDir
+    this.store = store
+    this.memory = engines.memory
+    this.habit = engines.habit
+    this.anchored = true
+    this.health.ok('storage')
+    if (this.config.habit.enabled && !this.habit) {
+      this.health.fail('habit', 'habit-engine-unavailable', 'habit learning unavailable: memory engine failed')
+    }
+    this.warning = this.health.warningLine()
+    this.refresh(true)
+    return true
   }
 
   get available(): boolean {
