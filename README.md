@@ -518,10 +518,16 @@ logs, tarballs).
   with the then-current suite. Audit pass 2 (`d875d17..8b76296`, eight per-defect fixes plus the audit
   probes) passed as
   [run 39137174421](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39137174421) with the
-  expanded **48-test** suite (23 plugin + 15 artifact + 10 audit). Two earlier red runs exposed CI-only
-  defects that the local sandbox could not (missing `@types/node` for `"types": ["node"]`, then an
-  optional `vitest/config` import inside the tsc project); both fixes are in the history
+  expanded **48-test** suite (23 plugin + 15 artifact + 10 audit). The v6' T0 fixes then passed as
+  [run 39649173985](https://github.com/x-000001/dsh-memory-plugin/actions/runs/39649173985) with the
+  now **52-test** suite (23 plugin + 15 artifact + 10 audit + 4 fixes). Two earlier red runs exposed
+  CI-only defects that the local sandbox could not (missing `@types/node` for `"types": ["node"]`, then
+  an optional `vitest/config` import inside the tsc project); both fixes are in the history
   (`8d5fd3a`, `55c053c`).
+* **Live install**: after a DSH restart the fixed loader reports `GET /dsh-memory/status` →
+  `health.status: "active"`, `stores.project: <workspace>/.dsh/memory`,
+  `stores.global: $DSH_HOME/memory`, judge off, `zeroLlm: true` — i.e. the project layer is anchored to
+  the opened workspace and no longer aliases the global root.
 * **Release gate exercised**: tag `v0.1.0` ran the Release workflow. The `release gate` job passed the
   full build/typecheck/test/package shape; the `publish to npm + GitHub Release` job then stopped at
   `Require NPM_TOKEN` with `::error::`, and the Publish + Create GitHub Release steps were **skipped**.
@@ -535,7 +541,7 @@ Observed by `dsh-plugin-cicd` (or any tool that reads repo status) from
 [`publish-status.json`](publish-status.json) and from this line:
 
 ```text
-dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39137174421 on main@8b76296 (48 tests)","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes","audit":"12 defects (pass 1) + 8 defects (pass 2) fixed with regression tests; see publish-status.json audit/audit2 blocks"}
+dsh-plugin-status: {"plugin":"dsh-plugin-memory","version":"0.1.0","ci":"success: run 39649173985 on main@6757bd1 (52 tests)","release":"configured: tag v0.1.0 gate passed, NPM_TOKEN missing => hard fail, publish/release skipped, 0 releases","npm":"not published (no NPM_TOKEN); publish --dry-run passes","audit":"12 defects (pass 1) + 8 defects (pass 2) + 3 v6' T0 root causes fixed with regression tests; see publish-status.json audit/audit2/acceptanceT0"}
 ```
 
 The sidebar/settings card created by the client half shows the same health/status data live

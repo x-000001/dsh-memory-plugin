@@ -26,12 +26,12 @@
     ],
     "status": "success",
     "observed": {
-      "runId": 39137174421,
-      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39137174421",
-      "commit": "8b76296",
+      "runId": 39649173985,
+      "url": "https://github.com/x-000001/dsh-memory-plugin/actions/runs/39649173985",
+      "commit": "6757bd1",
       "branch": "main",
       "conclusion": "success",
-      "note": "audit pass 2: frozen install, build, typecheck, 48 tests (23 plugin + 15 artifact + 10 audit), package shape and pack dry-run all passed on the eight-fix + probes tree. Earlier green runs: 39135601378 on 46b61e3 (38 tests) and 39132322238 on 55c053c; earlier runs 39132112953 and 39132255430 failed on CI-only typecheck defects (missing @types/node; optional vitest/config in the tsc project), both fixed in 8d5fd3a and 55c053c"
+      "note": "v6' T0 fixes: frozen install, build, typecheck, 52 tests (23 plugin + 15 artifact + 10 audit + 4 fixes), package shape and pack dry-run all passed. Earlier green runs: 39137174421 on 8b76296 (48 tests), 39135601378 on 46b61e3 (38 tests) and 39132322238 on 55c053c; earlier runs 39132112953 and 39132255430 failed on CI-only typecheck defects (missing @types/node; optional vitest/config in the tsc project), both fixed in 8d5fd3a and 55c053c"
     }
   },
   "install": {
@@ -46,6 +46,20 @@
       "health": "active",
       "judge": "off",
       "note": "boot stops afterwards at MISSING_CREDENTIAL only because the throwaway profile has no model key"
+    },
+    "liveObservation": {
+      "source": "GET http://127.0.0.1:3084/dsh-memory/status after the DSH restart that loaded the v6' T0 fixes",
+      "health": "active",
+      "warning": "",
+      "stores": {
+        "project": "C:/Users/29785/Desktop/Jw的app/.dsh/memory",
+        "global": "C:/Users/29785/.dsh/memory",
+        "habit": "C:/Users/29785/.dsh/storages/habit"
+      },
+      "counts": { "project": 1, "global": 0, "habit": 0, "total": 1 },
+      "cache": { "prefixStable": true, "tier": "full", "lines": 1 },
+      "judge": { "enabled": false, "model": "" },
+      "zeroLlm": true
     }
   },
   "release": {
@@ -132,7 +146,7 @@
     "vectorBackendRequired": false
   },
   "acceptanceT0": {
-    "status": "fixed-and-locally-verified; live T0 re-run requires a DSH restart",
+    "status": "fixed-and-verified-live-after-restart",
     "source": "v6' acceptance prompt: T0 must be self-consistent before T1..T7 are meaningful",
     "observedFailure": "live memory_remember failed with 'memory roots must not nest: project ... vs global ...'; health went unavailable (plugin 'on but 0 entries effective'); non-verbose memory_status emitted undefined fields (invalid JSON)",
     "rootCauses": [
